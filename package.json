@@ -5,8 +5,8 @@
     "node": "20.x"
   },
   "scripts": {
-    "build": "cd backend && npm install && npm run build",
+    "build": "cd backend && npm ci --only=production && npx prisma generate && npm run build",
     "start": "cd backend && npm start",
-    "postinstall": "cd backend && npm install"
+    "postinstall": "cd backend && npm ci && npx prisma generate"
   }
 }
