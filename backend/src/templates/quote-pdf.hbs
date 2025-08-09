@@ -1,0 +1,162 @@
+<div class="quote-container">
+  <!-- Header -->
+  <div class="header">
+    <div class="company-info">
+      {{#if company.logo}}
+        <img src="{{company.logo}}" alt="{{company.name}}" class="company-logo">
+      {{else}}
+        <h1 class="company-name">{{company.name}}</h1>
+      {{/if}}
+      <div class="company-details">
+        {{#if company.address}}<p>{{company.address}}</p>{{/if}}
+        {{#if company.phone}}<p>Phone: {{company.phone}}</p>{{/if}}
+        {{#if company.email}}<p>Email: {{company.email}}</p>{{/if}}
+        {{#if company.website}}<p>{{company.website}}</p>{{/if}}
+      </div>
+    </div>
+    <div class="quote-info">
+      <h2>QUOTE</h2>
+      <table>
+        <tr>
+          <td><strong>Quote #:</strong></td>
+          <td>{{quoteNumber}}</td>
+        </tr>
+        <tr>
+          <td><strong>Date:</strong></td>
+          <td>{{date currentDate}}</td>
+        </tr>
+        <tr>
+          <td><strong>Valid Until:</strong></td>
+          <td>{{date validUntil}}</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Customer Info -->
+  <div class="customer-section">
+    <h3>Bill To:</h3>
+    <div class="customer-info">
+      <p><strong>{{quote.customer.name}}</strong></p>
+      {{#if quote.customer.address}}
+        <p>{{quote.customer.address}}</p>
+      {{/if}}
+      <p>{{quote.customer.email}}</p>
+      {{#if quote.customer.phone}}
+        <p>{{quote.customer.phone}}</p>
+      {{/if}}
+    </div>
+  </div>
+
+  <!-- Quote Details -->
+  <div class="quote-details">
+    <h3>Quote Details</h3>
+    <table class="details-table">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Quantity</th>
+          <th>Unit Price</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <strong>{{quote.product.name}}</strong>
+            <div class="product-specs">
+              {{#each specifications}}
+                {{#unless (eq @key "custom_notes")}}
+                  <div class="spec-item">
+                    <span class="spec-label">{{formatSpecKey @key}}:</span>
+                    <span class="spec-value">{{formatSpecValue this}}</span>
+                  </div>
+                {{/unless}}
+              {{/each}}
+            </div>
+          </td>
+          <td class="text-center">{{number quote.quantity}}</td>
+          <td class="text-right">{{currency pricing.unitPrice}}</td>
+          <td class="text-right">{{currency quote.selling_price}}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pricing Breakdown -->
+  <div class="pricing-section">
+    <div class="pricing-breakdown">
+      <h4>Cost Breakdown</h4>
+      <table class="breakdown-table">
+        <tr>
+          <td>Material Cost:</td>
+          <td class="text-right">{{currency pricing.materialCost}}</td>
+        </tr>
+        {{#ifGreaterThan pricing.setupCost 0}}
+        <tr>
+          <td>Setup Cost:</td>
+          <td class="text-right">{{currency pricing.setupCost}}</td>
+        </tr>
+        {{/ifGreaterThan}}
+        <tr>
+          <td>Labor Cost:</td>
+          <td class="text-right">{{currency pricing.laborCost}}</td>
+        </tr>
+        <tr class="subtotal">
+          <td><strong>Total Cost:</strong></td>
+          <td class="text-right"><strong>{{currency pricing.totalCost}}</strong></td>
+        </tr>
+        <tr>
+          <td>Margin ({{percent pricing.marginPercent}}):</td>
+          <td class="text-right">{{currency (subtract quote.selling_price pricing.totalCost)}}</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="total-section">
+      <table class="total-table">
+        <tr class="grand-total">
+          <td><strong>Total Quote Amount:</strong></td>
+          <td class="text-right"><strong>{{currency quote.selling_price}}</strong></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Additional Notes -->
+  {{#if specifications.custom_notes}}
+  <div class="notes-section">
+    <h4>Additional Notes</h4>
+    <p>{{specifications.custom_notes}}</p>
+  </div>
+  {{/if}}
+
+  {{#if notes}}
+  <div class="notes-section">
+    <h4>Terms & Conditions</h4>
+    <p>{{notes}}</p>
+  </div>
+  {{/if}}
+
+  <!-- Footer -->
+  <div class="footer">
+    <div class="terms">
+      <h4>Terms</h4>
+      <ul>
+        <li>This quote is valid until {{date validUntil "short"}}.</li>
+        <li>Prices are subject to change after the validity period.</li>
+        <li>Payment terms: Net 30 days from invoice date.</li>
+        <li>All prices are in USD.</li>
+      </ul>
+    </div>
+    
+    <div class="contact">
+      <p>For questions about this quote, please contact us:</p>
+      <p><strong>{{company.phone}}</strong> | <strong>{{company.email}}</strong></p>
+    </div>
+
+    <div class="footer-note">
+      <p>Thank you for your business!</p>
+    </div>
+  </div>
+</div>

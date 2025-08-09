@@ -1,0 +1,274 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum UserRole {
+  admin
+  sales
+  production
+}
+
+enum QuoteStatus {
+  draft
+  sent
+  accepted
+  rejected
+}
+
+enum WorkOrderStatus {
+  pending
+  in_design
+  ready_to_print
+  printing
+  finishing
+  quality_check
+  complete
+  cancelled
+}
+
+enum MaterialUnitType {
+  sheet
+  roll
+  kg
+}
+
+// Models
+model Shop {
+  id                String   @id @default(uuid())
+  name              String
+  email             String   @unique
+  phone             String?
+  address           String?
+  markup_percent    Float    @default(30)
+  labor_hourly_rate Float    @default(50)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  // Relations
+  users         User[]
+  customers     Customer[]
+  products      Product[]
+  materials     Material[]
+  quotes        Quote[]
+  workOrders    WorkOrder[]
+  priceRules    PriceRule[]
+  quoteActivities QuoteActivity[]
+
+  @@map("shops")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password_hash String
+  name          String?
+  role          UserRole
+  shop_id       String
+  active        Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  // Relations
+  shop                  Shop                    @relation(fields: [shop_id], references: [id])
+  quotes                Quote[]
+  workOrderHistory      WorkOrderStatusHistory[]
+  assignedWorkOrders    WorkOrder[]
+
+  @@index([shop_id])
+  @@index([email])
+  @@map("users")
+}
+
+model Customer {
+  id              String    @id @default(uuid())
+  name            String
+  email           String
+  phone           String?
+  address         String?
+  shop_id         String
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  last_order_date DateTime?
+
+  // Relations
+  shop   Shop    @relation(fields: [shop_id], references: [id])
+  quotes Quote[]
+
+  @@unique([email, shop_id])
+  @@index([shop_id])
+  @@index([email])
+  @@map("customers")
+}
+
+model Material {
+  id            String           @id @default(uuid())
+  name          String
+  cost_per_unit Float
+  unit_type     MaterialUnitType
+  supplier      String?
+  sku           String?
+  shop_id       String
+  active        Boolean          @default(true)
+  created_at    DateTime         @default(now())
+  updated_at    DateTime         @updatedAt
+
+  // Relations
+  shop     Shop      @relation(fields: [shop_id], references: [id])
+  products Product[]
+
+  @@index([shop_id])
+  @@map("materials")
+}
+
+model Product {
+  id                String   @id @default(uuid())
+  name              String
+  category          String
+  base_cost_formula Json?
+  setup_cost        Float    @default(0)
+  setup_threshold   Int      @default(100)
+  estimated_hours   Float    @default(1)
+  material_id       String?
+  shop_id           String
+  active            Boolean  @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  // Relations
+  shop      Shop       @relation(fields: [shop_id], references: [id])
+  material  Material?  @relation(fields: [material_id], references: [id])
+  quotes    Quote[]
+  priceRules PriceRule[]
+
+  @@index([shop_id])
+  @@index([category])
+  @@map("products")
+}
+
+model Quote {
+  id               String      @id @default(uuid())
+  customer_id      String
+  user_id          String
+  product_id       String
+  shop_id          String
+  quantity         Int
+  specifications   Json
+  calculated_cost  Float
+  selling_price    Float
+  margin_percent   Float
+  status           QuoteStatus @default(draft)
+  pdf_url          String?
+  pdf_key          String?
+  sent_at          DateTime?
+  accepted_at      DateTime?
+  rejected_at      DateTime?
+  rejection_reason String?
+  created_at       DateTime    @default(now())
+  updated_at       DateTime    @updatedAt
+
+  // Relations
+  shop       Shop        @relation(fields: [shop_id], references: [id])
+  customer   Customer    @relation(fields: [customer_id], references: [id])
+  user       User        @relation(fields: [user_id], references: [id])
+  product    Product     @relation(fields: [product_id], references: [id])
+  workOrders WorkOrder[]
+  activities QuoteActivity[]
+
+  @@index([shop_id])
+  @@index([customer_id])
+  @@index([status])
+  @@index([created_at])
+  @@map("quotes")
+}
+
+model WorkOrder {
+  id               String          @id @default(uuid())
+  quote_id         String
+  shop_id          String
+  status           WorkOrderStatus @default(pending)
+  assigned_to      String?
+  priority         Int             @default(3)
+  due_date         DateTime?
+  actual_start     DateTime?
+  actual_finish    DateTime?
+  production_notes String?
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+
+  // Relations
+  shop          Shop                     @relation(fields: [shop_id], references: [id])
+  quote         Quote                    @relation(fields: [quote_id], references: [id])
+  assignedUser  User?                    @relation(fields: [assigned_to], references: [id])
+  statusHistory WorkOrderStatusHistory[]
+
+  @@index([shop_id])
+  @@index([status])
+  @@index([due_date])
+  @@map("work_orders")
+}
+
+model WorkOrderStatusHistory {
+  id            String          @id @default(uuid())
+  work_order_id String
+  status        WorkOrderStatus
+  notes         String?
+  changed_by    String
+  changed_at    DateTime        @default(now())
+
+  // Relations
+  workOrder  WorkOrder @relation(fields: [work_order_id], references: [id])
+  changedBy  User      @relation(fields: [changed_by], references: [id])
+
+  @@index([work_order_id])
+  @@map("work_order_status_history")
+}
+
+model PriceRule {
+  id              String   @id @default(uuid())
+  name            String
+  shop_id         String
+  product_id      String?
+  min_quantity    Int?
+  max_quantity    Int?
+  discount_percent Float?
+  fixed_price     Float?
+  active          Boolean  @default(true)
+  start_date      DateTime?
+  end_date        DateTime?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  // Relations
+  shop    Shop     @relation(fields: [shop_id], references: [id])
+  product Product? @relation(fields: [product_id], references: [id])
+
+  @@index([shop_id])
+  @@index([product_id])
+  @@map("price_rules")
+}
+
+model QuoteActivity {
+  id         String   @id @default(uuid())
+  quote_id   String
+  shop_id    String
+  action     String
+  metadata   Json?
+  created_at DateTime @default(now())
+
+  // Relations
+  quote Quote @relation(fields: [quote_id], references: [id])
+  shop  Shop  @relation(fields: [shop_id], references: [id])
+
+  @@index([quote_id])
+  @@index([shop_id])
+  @@map("quote_activities")
+}

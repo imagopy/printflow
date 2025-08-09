@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Quote from {{companyName}}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+    }
+    .header {
+      background-color: #1f2937;
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+    .content {
+      padding: 40px 30px;
+    }
+    .greeting {
+      font-size: 18px;
+      margin-bottom: 20px;
+    }
+    .message {
+      margin-bottom: 30px;
+    }
+    .quote-info {
+      background-color: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 30px;
+    }
+    .quote-info h2 {
+      margin-top: 0;
+      color: #1f2937;
+      font-size: 18px;
+    }
+    .quote-info p {
+      margin: 10px 0;
+    }
+    .cta-button {
+      display: inline-block;
+      background-color: #3b82f6;
+      color: white;
+      padding: 12px 30px;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: bold;
+      margin: 20px 0;
+    }
+    .cta-button:hover {
+      background-color: #2563eb;
+    }
+    .footer {
+      background-color: #f9fafb;
+      padding: 30px;
+      text-align: center;
+      font-size: 14px;
+      color: #6b7280;
+    }
+    .footer a {
+      color: #3b82f6;
+      text-decoration: none;
+    }
+    .divider {
+      border-bottom: 1px solid #e5e7eb;
+      margin: 30px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>{{companyName}}</h1>
+    </div>
+    
+    <div class="content">
+      <p class="greeting">Dear {{customerName}},</p>
+      
+      <div class="message">
+        <p>Thank you for your interest in our printing services. We're pleased to provide you with a detailed quote for your project.</p>
+        
+        {{#if message}}
+        <p>{{message}}</p>
+        {{/if}}
+      </div>
+      
+      <div class="quote-info">
+        <h2>Quote Details</h2>
+        <p><strong>Quote Number:</strong> {{quoteNumber}}</p>
+        <p><strong>Valid Until:</strong> {{date validUntil}}</p>
+      </div>
+      
+      <div style="text-align: center;">
+        <a href="{{quotePdfUrl}}" class="cta-button">View Your Quote</a>
+        <p style="font-size: 14px; color: #6b7280;">
+          Click the button above to view and download your detailed quote.
+        </p>
+      </div>
+      
+      <div class="divider"></div>
+      
+      <div>
+        <h3>Next Steps</h3>
+        <ol>
+          <li>Review the quote details carefully</li>
+          <li>Contact us if you have any questions or need modifications</li>
+          <li>Approve the quote to begin production</li>
+        </ol>
+      </div>
+      
+      <div class="divider"></div>
+      
+      <div>
+        <p><strong>Questions?</strong></p>
+        <p>We're here to help! Feel free to reach out to us:</p>
+        <p>
+          Phone: {{companyPhone}}<br>
+          Email: <a href="mailto:{{companyEmail}}">{{companyEmail}}</a>
+        </p>
+      </div>
+    </div>
+    
+    <div class="footer">
+      <p>© {{year}} {{companyName}}. All rights reserved.</p>
+      <p>
+        <a href="{{companyWebsite}}">{{companyWebsite}}</a>
+      </p>
+      <p style="margin-top: 20px; font-size: 12px;">
+        This quote was sent to you because you requested pricing information from {{companyName}}.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
