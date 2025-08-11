@@ -1,8 +1,8 @@
 /**
  * Customer Routes
  * 
- * Handles customer management operations with multi-tenant isolation.
- * Provides CRUD operations, search, and customer statistics.
+ * API endpoints for customer management including
+ * CRUD operations, search, and customer statistics.
  * 
  * @module routes/customer
  */
@@ -23,13 +23,11 @@ import {
   createCustomerSchema,
   updateCustomerSchema,
   listCustomersSchema,
-  CreateCustomerRequest,
-  UpdateCustomerRequest,
-  ListCustomersQuery,
 } from '../validators/customer.validators';
 import { NotFoundError, ConflictError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -49,13 +47,13 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant } = tenantReq;
-    const query = req.query as ListCustomersQuery;
+    const query = req.query as z.infer<typeof listCustomersSchema>;
 
     // Build where clause with filters
-    const where: Prisma.CustomerWhereInput = tenant.scope({});
+    const where: Prisma.CustomerWhereInput = { shop_id: tenant.shopId };
 
     // Search filter
-    if (query.search) {
+    if ('search' in query && query.search) {
       where.OR = [
         { name: { contains: query.search, mode: 'insensitive' } },
         { email: { contains: query.search, mode: 'insensitive' } },
@@ -64,30 +62,30 @@ router.get(
     }
 
     // Email/phone filters
-    if (query.hasEmail !== undefined) {
+    if ('hasEmail' in query && query.hasEmail !== undefined) {
       where.email = query.hasEmail ? { not: null } : null;
     }
-    if (query.hasPhone !== undefined) {
+    if ('hasPhone' in query && query.hasPhone !== undefined) {
       where.phone = query.hasPhone ? { not: null } : null;
     }
 
     // Date filters
-    if (query.lastOrderAfter || query.lastOrderBefore) {
+    if (('lastOrderAfter' in query && query.lastOrderAfter) || ('lastOrderBefore' in query && query.lastOrderBefore)) {
       where.last_order_date = {};
-      if (query.lastOrderAfter) {
+      if ('lastOrderAfter' in query && query.lastOrderAfter) {
         where.last_order_date.gte = new Date(query.lastOrderAfter);
       }
-      if (query.lastOrderBefore) {
+      if ('lastOrderBefore' in query && query.lastOrderBefore) {
         where.last_order_date.lte = new Date(query.lastOrderBefore);
       }
     }
 
-    if (query.createdAfter || query.createdBefore) {
+    if (('createdAfter' in query && query.createdAfter) || ('createdBefore' in query && query.createdBefore)) {
       where.created_at = {};
-      if (query.createdAfter) {
+      if ('createdAfter' in query && query.createdAfter) {
         where.created_at.gte = new Date(query.createdAfter);
       }
-      if (query.createdBefore) {
+      if ('createdBefore' in query && query.createdBefore) {
         where.created_at.lte = new Date(query.createdBefore);
       }
     }
@@ -194,7 +192,7 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
-    const data = req.body as CreateCustomerRequest;
+    const data = req.body as z.infer<typeof createCustomerSchema>;
 
     // Check for duplicate email within shop
     if (data.email) {
@@ -211,12 +209,22 @@ router.post(
 
     // Create customer
     const customer = await prisma.customer.create({
-      data: tenant.scopeCreate({
+      data: {
+        shop_id: tenant.shopId,
         name: data.name,
-        email: data.email?.toLowerCase(),
-        phone: data.phone,
-        address: data.address,
-      }),
+        email: data.email || null,
+        phone: data.phone || null,
+        address: data.address || null,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        address: true,
+        created_at: true,
+        shop_id: true,
+      },
     });
 
     logger.info('Customer created', {
@@ -247,7 +255,7 @@ router.put(
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
     const { id } = req.params;
-    const updates = req.body as UpdateCustomerRequest;
+    const data = req.body as z.infer<typeof updateCustomerSchema>;
 
     // Check if customer exists
     const existingCustomer = await prisma.customer.findFirst({
@@ -259,10 +267,10 @@ router.put(
     }
 
     // Check for duplicate email if updating
-    if (updates.email && updates.email !== existingCustomer.email) {
+    if (data.email && data.email !== existingCustomer.email) {
       const duplicateCustomer = await prisma.customer.findFirst({
         where: tenant.scope({
-          email: updates.email.toLowerCase(),
+          email: data.email.toLowerCase(),
           id: { not: id },
         }),
       });
@@ -276,12 +284,19 @@ router.put(
     const customer = await prisma.customer.update({
       where: { id },
       data: {
-        ...(updates.name && { name: updates.name }),
-        ...(updates.email !== undefined && { 
-          email: updates.email?.toLowerCase() || null 
-        }),
-        ...(updates.phone !== undefined && { phone: updates.phone }),
-        ...(updates.address !== undefined && { address: updates.address }),
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.email !== undefined && { email: data.email }),
+        ...(data.phone !== undefined && { phone: data.phone }),
+        ...(data.address !== undefined && { address: data.address }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        address: true,
+        created_at: true,
+        shop_id: true,
       },
     });
 

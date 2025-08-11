@@ -91,7 +91,7 @@ model User {
 model Customer {
   id              String    @id @default(uuid())
   name            String
-  email           String
+  email           String?
   phone           String?
   address         String?
   shop_id         String
@@ -103,9 +103,9 @@ model Customer {
   shop   Shop    @relation(fields: [shop_id], references: [id])
   quotes Quote[]
 
-  @@unique([email, shop_id])
   @@index([shop_id])
   @@index([email])
+  @@index([name])
   @@map("customers")
 }
 

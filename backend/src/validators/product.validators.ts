@@ -1,14 +1,14 @@
 /**
  * Product Validation Schemas
  * 
- * Zod schemas for validating product-related requests.
- * Ensures product data integrity and business rule compliance.
+ * Zod schemas for validating product-related API requests.
+ * Ensures data integrity and type safety at API boundaries.
  * 
  * @module validators/product
  */
 
 import { z } from 'zod';
-import { commonSchemas, createPaginatedQuerySchema } from '../middleware/validation';
+import { createPaginatedQuerySchema } from '../middleware/validation';
 
 /**
  * Create product request schema

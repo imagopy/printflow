@@ -16,6 +16,7 @@ export class AppError extends Error {
   public readonly code: string;
   public readonly isOperational: boolean;
   public readonly context?: Record<string, any>;
+  public readonly validationErrors?: Array<{ field: string; message: string }>;
 
   /**
    * Creates an application error

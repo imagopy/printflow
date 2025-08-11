@@ -9,7 +9,7 @@ import * as handlebars from 'handlebars';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { logger } from '../utils/logger';
-import { AppError } from '../utils/errors';
+
 import { env } from '../config/env';
 import { Quote, Customer, Product } from '@prisma/client';
 
@@ -110,15 +110,15 @@ class TemplateService {
     });
 
     // Conditional helpers
-    handlebars.registerHelper('ifEquals', function(arg1: any, arg2: any, options: any) {
+    handlebars.registerHelper('ifEquals', function(this: any, arg1: any, arg2: any, options: any) {
       return arg1 === arg2 ? options.fn(this) : options.inverse(this);
     });
 
-    handlebars.registerHelper('ifGreaterThan', function(arg1: number, arg2: number, options: any) {
+    handlebars.registerHelper('ifGreaterThan', function(this: any, arg1: number, arg2: number, options: any) {
       return arg1 > arg2 ? options.fn(this) : options.inverse(this);
     });
 
-    handlebars.registerHelper('unless', function(conditional: any, options: any) {
+    handlebars.registerHelper('unless', function(this: any, conditional: any, options: any) {
       return !conditional ? options.fn(this) : options.inverse(this);
     });
 
@@ -163,7 +163,8 @@ class TemplateService {
 
       this.partialsLoaded = true;
     } catch (error) {
-      logger.error('Failed to load template partials', error);
+      logger.error('Failed to load template partials', error as Error);
+      // Non-critical error, continue without partials
     }
   }
 
@@ -189,8 +190,8 @@ class TemplateService {
       this.templates.set(templateName, compiled);
       return compiled;
     } catch (error) {
-      logger.error(`Failed to load template: ${templateName}`, error);
-      throw new AppError(`Template not found: ${templateName}`, 500);
+      logger.error(`Failed to load template: ${templateName}`, error as Error);
+      throw new Error(`Template not found: ${templateName}`);
     }
   }
 
@@ -251,11 +252,71 @@ class TemplateService {
         'styles',
         'pdf.css'
       );
-      return await fs.readFile(stylesPath, 'utf-8');
+      const content = await fs.readFile(stylesPath, 'utf-8');
+      return content;
     } catch (error) {
-      logger.error('Failed to load PDF styles', error);
-      return '';
+      logger.error('Failed to load PDF styles', error as Error);
+      // Return default styles if file not found
+      return this.getDefaultPDFStyles();
     }
+  }
+
+  /**
+   * Get default PDF styles
+   */
+  private getDefaultPDFStyles(): string {
+    return `
+      @page {
+        size: A4;
+        margin: 20mm;
+      }
+
+      body {
+        font-family: Arial, sans-serif;
+        font-size: 12pt;
+        line-height: 1.6;
+        color: #333;
+      }
+
+      h1, h2, h3 {
+        color: #2c3e50;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+      }
+
+      th, td {
+        padding: 10px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+      }
+
+      th {
+        background-color: #f4f4f4;
+        font-weight: bold;
+      }
+
+      .header {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+
+      .footer {
+        text-align: center;
+        margin-top: 30px;
+        font-size: 10pt;
+        color: #666;
+      }
+
+      .total {
+        font-size: 16pt;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+    `;
   }
 
   /**

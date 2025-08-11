@@ -66,7 +66,7 @@ async function checkRedisHealth(): Promise<ServiceHealth> {
     
     return { status: 'healthy', responseTime };
   } catch (error) {
-    logger.error('Redis health check failed', { error });
+    logger.error('Redis health check failed', { error: error as Error });
     return { 
       status: 'unhealthy', 
       message: 'Redis connection failed',
@@ -129,20 +129,20 @@ router.get('/live', (_req: Request, res: Response) => {
 });
 
 /**
+ * GET /health/ready
  * Readiness probe endpoint
  * Checks if the service is ready to handle traffic
- * 
- * GET /health/ready
  */
 router.get('/ready', async (_req: Request, res: Response) => {
   try {
     const dbHealthy = await isDatabaseHealthy();
     
     if (!dbHealthy) {
-      return res.status(503).json({
+      res.status(503).json({
         status: 'not ready',
         reason: 'Database connection not established',
       });
+      return;
     }
 
     res.status(200).json({
@@ -150,7 +150,7 @@ router.get('/ready', async (_req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error('Readiness check failed', { error });
+    logger.error('Readiness check failed', { error: error as Error });
     res.status(503).json({
       status: 'not ready',
       reason: 'Health check failed',
@@ -165,8 +165,6 @@ router.get('/ready', async (_req: Request, res: Response) => {
  * GET /health
  */
 router.get('/', async (_req: Request, res: Response) => {
-  const start = Date.now();
-
   try {
     // Check all services in parallel
     const [dbHealth, redisHealth, storageHealth, emailHealth] = await Promise.all([
@@ -222,11 +220,11 @@ router.get('/', async (_req: Request, res: Response) => {
     res.status(statusCode).json(response);
 
   } catch (error) {
-    logger.error('Health check failed', { error });
+    logger.error('Health check failed', { error: error as Error });
     res.status(503).json({
       status: 'unhealthy',
       timestamp: new Date().toISOString(),
-      error: 'Health check failed',
+      error: 'Service unavailable',
     });
   }
 });
@@ -260,6 +258,94 @@ router.get('/metrics', (_req: Request, res: Response) => {
       arch: process.arch,
     },
   });
+});
+
+/**
+ * Get system metrics
+ * @returns System resource metrics
+ */
+
+/**
+ * Detailed health check endpoint
+ * Checks all service dependencies and returns detailed metrics
+ * 
+ * GET /health/detailed
+ */
+router.get('/detailed', async (_req: Request, res: Response) => {
+  try {
+    const [dbHealth, redisHealth, storageHealth, emailHealth] = await Promise.all([
+      isDatabaseHealthy()
+        .then((healthy) => ({
+          status: healthy ? 'healthy' : 'unhealthy',
+          message: healthy ? undefined : 'Database connection failed',
+        } as ServiceHealth))
+        .catch(() => ({
+          status: 'unhealthy',
+          message: 'Database check failed',
+        } as ServiceHealth)),
+      checkRedisHealth(),
+      checkStorageHealth(),
+      checkEmailHealth(),
+    ]);
+
+    // Determine overall status
+    const services = {
+      database: dbHealth,
+      ...(env.REDIS_URL && { redis: redisHealth }),
+      storage: storageHealth,
+      email: emailHealth,
+    };
+
+    const unhealthyServices = Object.values(services).filter(
+      (service) => service.status === 'unhealthy'
+    );
+    
+    const degradedServices = Object.values(services).filter(
+      (service) => service.status === 'degraded'
+    );
+
+    let overallStatus: 'healthy' | 'unhealthy' | 'degraded';
+    if (unhealthyServices.length > 0) {
+      overallStatus = 'unhealthy';
+    } else if (degradedServices.length > 0) {
+      overallStatus = 'degraded';
+    } else {
+      overallStatus = 'healthy';
+    }
+
+    const response: HealthResponse = {
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      version: process.env.npm_package_version || '1.0.0',
+      environment: env.NODE_ENV,
+      services,
+    };
+
+    res.status(200).json(response);
+  } catch (error) {
+    logger.error('Detailed health check failed', { error: error as Error });
+    res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      error: 'Service unavailable',
+    });
+  }
+});
+
+/**
+ * Liveness probe endpoint
+ * Checks if the service is alive and can handle requests
+ * 
+ * GET /health/liveness
+ */
+router.get('/liveness', (_req: Request, res: Response) => {
+  try {
+    res.status(200).send('OK');
+  } catch (error) {
+    logger.error('Liveness probe failed', { error: error as Error });
+    res.status(503).send('Service Unavailable');
+  }
 });
 
 export default router;

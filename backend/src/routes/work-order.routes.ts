@@ -1,59 +1,42 @@
 /**
  * Work Order Routes
  * 
- * Handles work order management operations including status updates,
- * assignment, Kanban view, and production tracking.
+ * API endpoints for work order management including
+ * status updates, assignment, and production tracking.
  * 
  * @module routes/work-order
  */
 
 import { Router, Request, Response } from 'express';
+import { authenticateToken, requireRole } from '../middleware/auth';
+import { attachTenant, TenantRequest } from '../middleware/tenant';
+import { validateQuery, validateParams } from '../middleware/validation';
+import { asyncHandler } from '../utils/async-handler';
 import { prisma } from '../config/database';
-import { authenticate, requireRole } from '../middleware/auth';
-import { tenantIsolation, TenantRequest } from '../middleware/tenant';
-import { 
-  validateBody, 
-  validateQuery, 
-  validateParams,
-  commonSchemas 
-} from '../middleware/validation';
-import { asyncHandler } from '../middleware/error-handler';
-import { writeLimiter } from '../middleware/rate-limit';
+import { logger } from '../utils/logger';
 import {
   updateWorkOrderStatusSchema,
   updateWorkOrderSchema,
   listWorkOrdersSchema,
   kanbanViewSchema,
   batchUpdateWorkOrdersSchema,
-  recordProductionTimeSchema,
-  UpdateWorkOrderStatusRequest,
-  UpdateWorkOrderRequest,
-  ListWorkOrdersQuery,
-  KanbanViewQuery,
-  BatchUpdateWorkOrdersRequest,
-  RecordProductionTimeRequest,
 } from '../validators/work-order.validators';
-import { 
-  NotFoundError, 
-  BusinessError, 
-  AuthorizationError 
-} from '../utils/errors';
-import { logger } from '../utils/logger';
-import { 
+import {
   validateStatusTransition,
-  getAllowedNextStatuses,
-  canEditWorkOrder,
   getProductionPhase,
   calculatePriority,
+  canEditWorkOrder,
   shouldNotifyOnStatusChange,
+  getAllowedNextStatuses,
 } from '../services/work-order.service';
 import { Prisma, WorkOrderStatus, UserRole } from '@prisma/client';
+import { z } from 'zod';
 
 const router = Router();
 
 // Apply authentication and tenant isolation to all routes
-router.use(authenticate);
-router.use(tenantIsolation);
+router.use(authenticateToken);
+router.use(attachTenant);
 
 /**
  * List work orders with pagination and filtering
@@ -66,31 +49,32 @@ router.get(
   validateQuery(listWorkOrdersSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
-    const { tenant, user } = tenantReq;
-    const query = req.query as ListWorkOrdersQuery;
+    const { tenant } = tenantReq;
+    const query = tenantReq.query as z.infer<typeof listWorkOrdersSchema>;
 
-    // Build where clause with filters
-    const where: Prisma.WorkOrderWhereInput = tenant.scope({});
+    // Build where clause
+    const where: Prisma.WorkOrderWhereInput = {
+      shop_id: tenant.shopId,
+    };
 
-    // Status filter
-    if (query.status) {
+    if ('status' in query && query.status) {
       where.status = query.status;
     }
 
-    // Assigned to filter
-    if (query.assignedTo) {
+    // Filter by assigned user
+    if ('assignedTo' in query && query.assignedTo) {
       where.assigned_to = query.assignedTo;
     }
 
-    // Customer filter (through quote)
-    if (query.customerId) {
+    // Filter by customer
+    if ('customerId' in query && query.customerId) {
       where.quote = {
         customer_id: query.customerId,
       };
     }
 
-    // Overdue filter
-    if (query.overdue) {
+    // Filter overdue work orders
+    if ('overdue' in query && query.overdue) {
       where.due_date = {
         lt: new Date(),
       };
@@ -99,24 +83,23 @@ router.get(
       };
     }
 
-    // Due date range filter
-    if (query.dueDateStart || query.dueDateEnd) {
+    // Date range filters
+    if (('dueDateStart' in query && query.dueDateStart) || ('dueDateEnd' in query && query.dueDateEnd)) {
       where.due_date = {};
-      if (query.dueDateStart) {
+      if ('dueDateStart' in query && query.dueDateStart) {
         where.due_date.gte = new Date(query.dueDateStart);
       }
-      if (query.dueDateEnd) {
+      if ('dueDateEnd' in query && query.dueDateEnd) {
         where.due_date.lte = new Date(query.dueDateEnd);
       }
     }
 
-    // Created date range filter
-    if (query.createdStart || query.createdEnd) {
+    if (('createdStart' in query && query.createdStart) || ('createdEnd' in query && query.createdEnd)) {
       where.created_at = {};
-      if (query.createdStart) {
+      if ('createdStart' in query && query.createdStart) {
         where.created_at.gte = new Date(query.createdStart);
       }
-      if (query.createdEnd) {
+      if ('createdEnd' in query && query.createdEnd) {
         where.created_at.lte = new Date(query.createdEnd);
       }
     }
@@ -161,15 +144,15 @@ router.get(
               },
             },
           },
-          assigned_to_user: {
+          assignedUser: {
             select: {
               id: true,
               email: true,
             },
           },
-          status_history: {
+          statusHistory: {
             orderBy: { changed_at: 'desc' },
-            take: 1,
+            take: 5,
           },
         },
       }),
@@ -208,7 +191,7 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant } = tenantReq;
-    const query = req.query as KanbanViewQuery;
+    const query = req.query as z.infer<typeof kanbanViewSchema>;
 
     // Build base where clause
     const where: Prisma.WorkOrderWhereInput = tenant.scope({});
@@ -256,7 +239,7 @@ router.get(
                 },
               },
             },
-            assigned_to_user: {
+            assignedUser: {
               select: {
                 id: true,
                 email: true,
@@ -307,7 +290,7 @@ router.get(
 router.get(
   '/:id',
   requireRole('admin', 'sales', 'production'),
-  validateParams(commonSchemas.uuid),
+  validateParams(z.string()),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant } = tenantReq;
@@ -332,17 +315,17 @@ router.get(
             },
           },
         },
-        assigned_to_user: {
+        assignedUser: {
           select: {
             id: true,
             email: true,
             role: true,
           },
         },
-        status_history: {
+        statusHistory: {
           orderBy: { changed_at: 'desc' },
           include: {
-            changed_by_user: {
+            changedBy: {
               select: {
                 id: true,
                 email: true,
@@ -354,7 +337,7 @@ router.get(
     });
 
     if (!workOrder) {
-      throw new NotFoundError('Work Order', id);
+      throw new Error('Work Order not found');
     }
 
     // Add calculated fields
@@ -379,14 +362,11 @@ router.get(
 router.put(
   '/:id/status',
   requireRole('admin', 'production'),
-  writeLimiter,
-  validateParams(commonSchemas.uuid),
-  validateBody(updateWorkOrderStatusSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
     const { id } = req.params;
-    const { status: newStatus, notes } = req.body as UpdateWorkOrderStatusRequest;
+    const { status: newStatus, notes } = req.body as z.infer<typeof updateWorkOrderStatusSchema>;
 
     // Fetch current work order
     const workOrder = await prisma.workOrder.findFirst({
@@ -402,7 +382,7 @@ router.put(
     });
 
     if (!workOrder) {
-      throw new NotFoundError('Work Order', id);
+      throw new Error('Work Order not found');
     }
 
     // Validate status transition
@@ -473,14 +453,11 @@ router.put(
 router.put(
   '/:id',
   requireRole('admin', 'production'),
-  writeLimiter,
-  validateParams(commonSchemas.uuid),
-  validateBody(updateWorkOrderSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
     const { id } = req.params;
-    const updates = req.body as UpdateWorkOrderRequest;
+    const updates = req.body as z.infer<typeof updateWorkOrderSchema>;
 
     // Fetch work order
     const workOrder = await prisma.workOrder.findFirst({
@@ -488,14 +465,13 @@ router.put(
     });
 
     if (!workOrder) {
-      throw new NotFoundError('Work Order', id);
+      throw new Error('Work Order not found');
     }
 
     // Check if work order can be edited
     if (!canEditWorkOrder(workOrder.status)) {
-      throw new BusinessError(
-        `Cannot edit work order in ${workOrder.status} status`,
-        'WORK_ORDER_NOT_EDITABLE'
+      throw new Error(
+        `Cannot edit work order in ${workOrder.status} status`
       );
     }
 
@@ -510,7 +486,7 @@ router.put(
       });
 
       if (!assignedUser) {
-        throw new NotFoundError('Production User', updates.assigned_to);
+        throw new Error('Production User not found');
       }
     }
 
@@ -526,7 +502,7 @@ router.put(
         updated_at: new Date(),
       },
       include: {
-        assigned_to_user: {
+        assignedUser: {
           select: {
             id: true,
             email: true,
@@ -573,12 +549,10 @@ router.put(
 router.patch(
   '/batch',
   requireRole('admin', 'production'),
-  writeLimiter,
-  validateBody(batchUpdateWorkOrdersSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
-    const { workOrderIds, updates } = req.body as BatchUpdateWorkOrdersRequest;
+    const { workOrderIds, updates } = req.body as z.infer<typeof batchUpdateWorkOrdersSchema>;
 
     // Verify all work orders belong to shop
     const workOrderCount = await prisma.workOrder.count({
@@ -589,9 +563,8 @@ router.patch(
     });
 
     if (workOrderCount !== workOrderIds.length) {
-      throw new BusinessError(
-        'One or more work orders not found or do not belong to your shop',
-        'INVALID_WORK_ORDER_IDS'
+      throw new Error(
+        'One or more work orders not found or do not belong to your shop'
       );
     }
 
@@ -612,9 +585,8 @@ router.patch(
         try {
           validateStatusTransition(wo.status, updates.status);
         } catch (error) {
-          throw new BusinessError(
-            `Work order ${wo.id}: ${error.message}`,
-            'INVALID_BATCH_TRANSITION'
+          throw new Error(
+            `Work order ${wo.id}: ${(error as Error).message}`
           );
         }
       }
@@ -631,7 +603,7 @@ router.patch(
       });
 
       if (!assignedUser) {
-        throw new NotFoundError('Production User', updates.assigned_to);
+        throw new Error('Production User not found');
       }
     }
 
@@ -733,7 +705,7 @@ router.get(
         },
       }),
 
-      // Completion statistics
+      // Production statistics
       prisma.workOrder.aggregate({
         where: {
           shop_id: tenant.shopId,
@@ -744,10 +716,6 @@ router.get(
           },
         },
         _count: true,
-        _avg: {
-          // This would need a computed field or raw query for production time
-          // For now, we'll calculate it separately
-        },
       }),
 
       // Assignment statistics

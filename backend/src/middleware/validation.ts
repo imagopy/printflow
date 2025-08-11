@@ -53,52 +53,38 @@ function formatZodError(error: ZodError): Array<{ field: string; message: string
 }
 
 /**
- * Create validation middleware for request data
+ * Request validation middleware factory for body
  * 
  * @param schema - Zod schema to validate against
- * @param target - Part of request to validate
- * @param options - Validation options
- * @returns {Function} Express middleware function
+ * @returns Express middleware function
  */
-export function validate(
-  schema: ZodSchema,
-  target: ValidationTarget = 'body',
-  options: ValidationOptions = {}
-) {
-  const {
-    stripUnknown = true,
-    errorMessage = 'Validation failed',
-    logErrors = true,
-  } = options;
-
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export function validateBody<T extends z.ZodTypeAny>(
+  schema: T
+): (req: Request, _res: Response, next: NextFunction) => void {
+  return (req: Request, _res: Response, next: NextFunction): void => {
     try {
       // Get data to validate based on target
-      const dataToValidate = req[target];
+      const dataToValidate = req.body;
 
       // Parse and validate data
-      const validatedData = await schema.parseAsync(dataToValidate);
+      const validatedData = schema.parse(dataToValidate);
 
       // Replace request data with validated data
-      if (stripUnknown) {
-        req[target] = validatedData;
-      }
+      req.body = validatedData;
 
       next();
     } catch (error) {
       if (error instanceof ZodError) {
         const validationErrors = formatZodError(error);
 
-        if (logErrors) {
-          logger.warn('Request validation failed', {
-            target,
-            errors: validationErrors,
-            path: req.path,
-            method: req.method,
-          });
-        }
+        logger.warn('Request validation failed', {
+          target: 'body',
+          errors: validationErrors,
+          path: req.path,
+          method: req.method,
+        });
 
-        next(new ValidationError(errorMessage, validationErrors));
+        next(new ValidationError('Validation failed', validationErrors));
       } else {
         next(error);
       }
@@ -107,39 +93,83 @@ export function validate(
 }
 
 /**
- * Validate request body
- * Convenience function for body validation
+ * Request validation middleware factory for query
  * 
- * @param schema - Zod schema
- * @param options - Validation options
- * @returns {Function} Express middleware
+ * @param schema - Zod schema to validate against
+ * @returns Express middleware function
  */
-export function validateBody(schema: ZodSchema, options?: ValidationOptions) {
-  return validate(schema, 'body', options);
+export function validateQuery<T extends z.ZodTypeAny>(
+  schema: T
+): (req: Request, _res: Response, next: NextFunction) => void {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    try {
+      // Get data to validate based on target
+      const dataToValidate = req.query;
+
+      // Parse and validate data
+      const validatedData = schema.parse(dataToValidate);
+
+      // Replace request data with validated data
+      req.query = validatedData;
+
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        const validationErrors = formatZodError(error);
+
+        logger.warn('Request validation failed', {
+          target: 'query',
+          errors: validationErrors,
+          path: req.path,
+          method: req.method,
+        });
+
+        next(new ValidationError('Validation failed', validationErrors));
+      } else {
+        next(error);
+      }
+    }
+  };
 }
 
 /**
- * Validate query parameters
- * Convenience function for query validation
+ * Request validation middleware factory for params
  * 
- * @param schema - Zod schema
- * @param options - Validation options
- * @returns {Function} Express middleware
+ * @param schema - Zod schema to validate against
+ * @returns Express middleware function
  */
-export function validateQuery(schema: ZodSchema, options?: ValidationOptions) {
-  return validate(schema, 'query', options);
-}
+export function validateParams<T extends z.ZodTypeAny>(
+  schema: T
+): (req: Request, _res: Response, next: NextFunction) => void {
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    try {
+      // Get data to validate based on target
+      const dataToValidate = req.params;
 
-/**
- * Validate route parameters
- * Convenience function for params validation
- * 
- * @param schema - Zod schema
- * @param options - Validation options
- * @returns {Function} Express middleware
- */
-export function validateParams(schema: ZodSchema, options?: ValidationOptions) {
-  return validate(schema, 'params', options);
+      // Parse and validate data
+      const validatedData = schema.parse(dataToValidate);
+
+      // Replace request data with validated data
+      req.params = validatedData;
+
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        const validationErrors = formatZodError(error);
+
+        logger.warn('Request validation failed', {
+          target: 'params',
+          errors: validationErrors,
+          path: req.path,
+          method: req.method,
+        });
+
+        next(new ValidationError('Validation failed', validationErrors));
+      } else {
+        next(error);
+      }
+    }
+  };
 }
 
 /**
@@ -157,7 +187,7 @@ export function validateRequest(
   },
   options?: ValidationOptions
 ) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     const errors: Array<{ field: string; message: string }> = [];
 
     // Validate each part
@@ -199,52 +229,55 @@ export function validateRequest(
 }
 
 /**
+ * Options for file validation
+ */
+export interface FileValidationOptions {
+  mimeTypes?: string[];
+  maxSize?: number;
+}
+
+/**
  * Common validation schemas
  */
 export const commonSchemas = {
-  /**
-   * UUID validation
-   */
+  // UUID validation
   uuid: z.string().uuid('Invalid ID format'),
   
-  /**
-   * Pagination query parameters
-   */
-  pagination: z.object({
-    page: z.string().regex(/^\d+$/).transform(Number).default('1'),
-    pageSize: z.string().regex(/^\d+$/).transform(Number).default('20'),
-    sortBy: z.string().optional(),
-    sortOrder: z.enum(['asc', 'desc']).default('asc'),
-  }),
+  // Pagination
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   
-  /**
-   * Date range query parameters
-   */
-  dateRange: z.object({
-    startDate: z.string().datetime().optional(),
-    endDate: z.string().datetime().optional(),
-  }),
+  // Sorting
+  sortBy: z.string().optional(),
+  sortOrder: z.enum(['asc', 'desc']).default('desc'),
   
-  /**
-   * Search query parameter
-   */
-  search: z.object({
-    q: z.string().min(1).optional(),
-  }),
+  // Date range
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  
+  // Search
+  search: z.string().trim().optional(),
 };
 
 /**
- * Create paginated query schema
+ * Create a paginated query schema
  * Combines pagination with custom filters
  * 
  * @param filterSchema - Additional filter schema
- * @returns {ZodSchema} Combined schema
+ * @returns Combined schema
  */
-export function createPaginatedQuerySchema(filterSchema?: ZodSchema) {
-  const baseSchema = commonSchemas.pagination;
+export function createPaginatedQuerySchema<T extends z.ZodRawShape>(
+  filterSchema?: z.ZodObject<T>
+): z.ZodObject<z.ZodRawShape> {
+  const baseSchema = z.object({
+    page: commonSchemas.page,
+    limit: commonSchemas.limit,
+    sortBy: commonSchemas.sortBy,
+    sortOrder: commonSchemas.sortOrder,
+  });
   
   if (filterSchema) {
-    return baseSchema.merge(filterSchema);
+    return baseSchema.merge(filterSchema) as z.ZodObject<z.ZodRawShape>;
   }
   
   return baseSchema;
@@ -270,3 +303,41 @@ export const emailSchema = z
   .email('Invalid email address')
   .toLowerCase()
   .trim();
+
+/**
+ * File upload validation middleware
+ * 
+ * @param options - Validation options
+ * @returns Express middleware
+ */
+export function validateFile(options: FileValidationOptions): (req: Request, _res: Response, next: NextFunction) => void {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        throw new ValidationError('No file uploaded');
+      }
+
+      const { mimeTypes, maxSize } = options;
+      const file = req.file;
+
+      // Validate file type
+      if (mimeTypes && !mimeTypes.includes(file.mimetype)) {
+        throw new ValidationError(
+          `Invalid file type. Allowed types: ${mimeTypes.join(', ')}`
+        );
+      }
+
+      // Validate file size
+      if (maxSize && file.size > maxSize) {
+        const maxSizeMB = (maxSize / 1024 / 1024).toFixed(2);
+        throw new ValidationError(
+          `File too large. Maximum size: ${maxSizeMB}MB`
+        );
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}

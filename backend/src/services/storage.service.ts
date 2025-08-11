@@ -142,8 +142,8 @@ class StorageService {
         contentType: headResponse.ContentType,
       };
     } catch (error) {
-      logger.error('Failed to upload file', error);
-      throw new AppError('Failed to upload file', 500);
+      logger.error('Failed to upload file', error as Error);
+      throw new Error(`Failed to upload file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -210,8 +210,8 @@ class StorageService {
 
       return url;
     } catch (error) {
-      logger.error('Failed to generate signed URL', error);
-      throw new AppError('Failed to generate signed URL', 500);
+      logger.error('Failed to generate signed URL', error as Error);
+      throw new Error(`Failed to generate signed URL: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -242,10 +242,10 @@ class StorageService {
       });
 
       await this.client.send(command);
-      logger.info(`File deleted successfully: ${key}`);
+      logger.info('File deleted successfully', { key });
     } catch (error) {
-      logger.error('Failed to delete file', error);
-      throw new AppError('Failed to delete file', 500);
+      logger.error('Failed to delete file', error as Error);
+      throw new Error(`Failed to delete file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -270,10 +270,10 @@ class StorageService {
       });
 
       await this.client.send(command);
-      logger.info(`File copied from ${sourceKey} to ${destinationKey}`);
+      logger.info('File copied successfully', { source: sourceKey, destination: destinationKey });
     } catch (error) {
-      logger.error('Failed to copy file', error);
-      throw new AppError('Failed to copy file', 500);
+      logger.error('Failed to copy file', error as Error);
+      throw new Error(`Failed to copy file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -321,8 +321,8 @@ class StorageService {
         etag: item.ETag,
       }));
     } catch (error) {
-      logger.error('Failed to list files', error);
-      throw new AppError('Failed to list files', 500);
+      logger.error('Failed to list files', error as Error);
+      throw new Error(`Failed to list files: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

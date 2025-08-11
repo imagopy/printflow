@@ -22,6 +22,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.string().transform(Number).default('3000'),
   BASE_URL: z.string().url().default('http://localhost:3000'),
+  APP_URL: z.string().url().default('http://localhost:5173'),
+  API_URL: z.string().url().default('http://localhost:3000'),
 
   // Database
   DATABASE_URL: z.string().url(),
@@ -34,20 +36,42 @@ const envSchema = z.object({
   // Redis
   REDIS_URL: z.string().url().optional(),
 
-  // Email Service
+  // Email Service - SendGrid
   SENDGRID_API_KEY: z.string().optional(),
+  SENDGRID_FROM_EMAIL: z.string().email().optional(),
+  SENDGRID_FROM_NAME: z.string().optional(),
+
+  // Email Service - AWS SES
   AWS_SES_REGION: z.string().optional(),
   AWS_SES_ACCESS_KEY_ID: z.string().optional(),
   AWS_SES_SECRET_ACCESS_KEY: z.string().optional(),
+  AWS_SES_FROM_EMAIL: z.string().email().optional(),
 
-  // File Storage
+  // File Storage - AWS S3
   S3_BUCKET: z.string(),
+  AWS_S3_BUCKET: z.string().optional(),
+  AWS_S3_REGION: z.string().optional(),
+  AWS_S3_PUBLIC_URL: z.string().url().optional(),
   AWS_ACCESS_KEY_ID: z.string(),
   AWS_SECRET_ACCESS_KEY: z.string(),
   AWS_REGION: z.string().default('us-east-1'),
 
+  // File Storage - CloudFlare R2
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_ENDPOINT: z.string().url().optional(),
+
   // PDF Generation
   PUPPETEER_EXECUTABLE_PATH: z.string().optional(),
+  PDF_STORAGE_PATH: z.string().default('./temp/pdfs'),
+
+  // Company Information
+  COMPANY_NAME: z.string().default('PrintFlow'),
+  COMPANY_ADDRESS: z.string().optional(),
+  COMPANY_PHONE: z.string().optional(),
+  COMPANY_EMAIL: z.string().email().optional(),
+  COMPANY_WEBSITE: z.string().url().optional(),
 
   // CORS
   CORS_ORIGIN: z.string().default('http://localhost:5173'),

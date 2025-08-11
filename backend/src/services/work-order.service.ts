@@ -18,26 +18,33 @@ const ALLOWED_TRANSITIONS: Record<WorkOrderStatus, WorkOrderStatus[]> = {
   [WorkOrderStatus.pending]: [
     WorkOrderStatus.in_design,
     WorkOrderStatus.ready_to_print,
+    WorkOrderStatus.cancelled,
   ],
   [WorkOrderStatus.in_design]: [
     WorkOrderStatus.ready_to_print,
+    WorkOrderStatus.cancelled,
   ],
   [WorkOrderStatus.ready_to_print]: [
     WorkOrderStatus.printing,
+    WorkOrderStatus.cancelled,
   ],
   [WorkOrderStatus.printing]: [
     WorkOrderStatus.finishing,
     WorkOrderStatus.quality_check,
+    WorkOrderStatus.cancelled,
   ],
   [WorkOrderStatus.finishing]: [
     WorkOrderStatus.quality_check,
     WorkOrderStatus.complete,
+    WorkOrderStatus.cancelled,
   ],
   [WorkOrderStatus.quality_check]: [
     WorkOrderStatus.complete,
     WorkOrderStatus.printing, // Allow sending back for reprinting
+    WorkOrderStatus.cancelled,
   ],
   [WorkOrderStatus.complete]: [], // Terminal state
+  [WorkOrderStatus.cancelled]: [], // Terminal state
 };
 
 /**
@@ -84,21 +91,40 @@ export function getAllowedNextStatuses(
  */
 export function canEditWorkOrder(status: WorkOrderStatus): boolean {
   // Only allow editing work orders that haven't started production
-  return [
+  const editableStatuses: WorkOrderStatus[] = [
     WorkOrderStatus.pending,
     WorkOrderStatus.in_design,
-  ].includes(status);
+  ];
+  return editableStatuses.includes(status);
 }
 
 /**
- * Checks if a work order can be cancelled based on its status
+ * Checks if a work order can be cancelled
  * 
  * @param status - Current work order status
  * @returns true if work order can be cancelled
  */
 export function canCancelWorkOrder(status: WorkOrderStatus): boolean {
-  // Cannot cancel completed work orders
-  return status !== WorkOrderStatus.complete;
+  // Cannot cancel completed or already cancelled work orders
+  return status !== WorkOrderStatus.complete && status !== WorkOrderStatus.cancelled;
+}
+
+/**
+ * Checks if a work order can be printed
+ * 
+ * @param status - Current work order status
+ * @returns true if work order can be printed
+ */
+export function canPrintWorkOrder(status: WorkOrderStatus): boolean {
+  // Can print once design is complete
+  const printableStatuses: WorkOrderStatus[] = [
+    WorkOrderStatus.ready_to_print,
+    WorkOrderStatus.printing,
+    WorkOrderStatus.finishing,
+    WorkOrderStatus.quality_check,
+    WorkOrderStatus.complete,
+  ];
+  return printableStatuses.includes(status);
 }
 
 /**
@@ -121,6 +147,8 @@ export function getProductionPhase(status: WorkOrderStatus): string {
       return 'Post-production';
     case WorkOrderStatus.complete:
       return 'Completed';
+    case WorkOrderStatus.cancelled:
+      return 'Cancelled';
     default:
       return 'Unknown';
   }
@@ -145,6 +173,7 @@ export function getEstimatedHoursRemaining(
     [WorkOrderStatus.finishing]: 0.85,
     [WorkOrderStatus.quality_check]: 0.95,
     [WorkOrderStatus.complete]: 1.0,
+    [WorkOrderStatus.cancelled]: 1.0, // Consider cancelled as complete for time calculation
   };
 
   const percentComplete = completionPercentage[status] || 0;
@@ -159,11 +188,12 @@ export function getEstimatedHoursRemaining(
  */
 export function shouldNotifyOnStatusChange(newStatus: WorkOrderStatus): boolean {
   // Notify on major milestones
-  return [
+  const notifyStatuses: WorkOrderStatus[] = [
     WorkOrderStatus.ready_to_print,
     WorkOrderStatus.quality_check,
     WorkOrderStatus.complete,
-  ].includes(newStatus);
+  ];
+  return notifyStatuses.includes(newStatus);
 }
 
 /**

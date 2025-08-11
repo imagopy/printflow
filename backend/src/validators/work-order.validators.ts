@@ -1,15 +1,15 @@
 /**
  * Work Order Validation Schemas
  * 
- * Zod schemas for validating work order-related requests.
- * Ensures work order data integrity and state machine compliance.
+ * Zod schemas for validating work order-related API requests.
+ * Ensures data integrity and type safety at API boundaries.
  * 
  * @module validators/work-order
  */
 
 import { z } from 'zod';
 import { WorkOrderStatus } from '@prisma/client';
-import { commonSchemas, createPaginatedQuerySchema } from '../middleware/validation';
+import { createPaginatedQuerySchema } from '../middleware/validation';
 
 /**
  * Update work order status schema
@@ -86,6 +86,12 @@ export const recordProductionTimeSchema = z.object({
   action: z.enum(['start', 'pause', 'resume', 'complete']),
   notes: z.string().max(500).optional(),
 });
+
+/**
+ * Alias exports for backward compatibility
+ */
+export const updateWorkOrderAssignmentSchema = updateWorkOrderSchema;
+export const updateWorkOrderDetailsSchema = updateWorkOrderSchema;
 
 /**
  * Type exports for use in route handlers

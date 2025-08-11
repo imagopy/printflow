@@ -8,7 +8,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
-import { env, isDevelopment } from './env';
+import { isDevelopment } from './env';
 
 /**
  * Extended Prisma Client with logging configuration
@@ -36,6 +36,12 @@ declare global {
  * @constant
  */
 export const prisma = globalThis.prisma ?? prismaClientSingleton();
+
+/**
+ * Alias for prisma client for backward compatibility
+ * @constant
+ */
+export const db = prisma;
 
 // Store prisma instance in global for development hot-reloading
 if (isDevelopment()) {

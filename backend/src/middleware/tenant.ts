@@ -32,18 +32,18 @@ export interface TenantRequest extends AuthenticatedRequest {
 }
 
 /**
- * Tenant isolation middleware
- * Attaches tenant context to authenticated requests
+ * Middleware to attach tenant context to requests
+ * Validates shop ownership and adds tenant info
  * 
  * @param req - Express request
- * @param res - Express response
- * @param next - Next middleware function
+ * @param _res - Express response (unused)
+ * @param next - Express next function
  */
-export function tenantIsolation(
+export const attachTenant = async (
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
-): void {
+): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
     
@@ -100,21 +100,29 @@ export function tenantIsolation(
   } catch (error) {
     next(error);
   }
-}
+};
+
+/**
+ * Alias for backward compatibility
+ */
+export const tenantIsolation = attachTenant;
 
 /**
  * Create scoped Prisma where clause
- * Helper for complex queries with tenant isolation
+ * Adds shop_id filter to ensure tenant isolation
  * 
- * @param shopId - Shop ID to scope to
+ * @param shopId - Shop ID to scope queries
  * @param where - Existing where clause
- * @returns {object} Scoped where clause
+ * @returns Scoped where clause
  */
-export function createScopedWhere<T extends object>(
+export function createTenantScope(
   shopId: string,
-  where?: T
-): T & { shop_id: string } {
-  return { ...where, shop_id: shopId } as T & { shop_id: string };
+  where: Record<string, any> = {}
+): Record<string, any> {
+  return {
+    ...where,
+    shop_id: shopId,
+  };
 }
 
 /**
@@ -141,7 +149,7 @@ export function createScopedInclude(
       // Complex include - merge where clause
       scopedInclude[key] = {
         ...value,
-        where: createScopedWhere(shopId, value.where),
+        where: createTenantScope(shopId, value.where),
       };
     }
   }
@@ -217,7 +225,7 @@ export function createPrismaTenantMiddleware(shopId: string) {
       // Add shop_id to where clause for queries
       if (['findFirst', 'findMany', 'findUnique', 'count', 'aggregate'].includes(params.action)) {
         params.args = params.args || {};
-        params.args.where = createScopedWhere(shopId, params.args.where);
+        params.args.where = createTenantScope(shopId, params.args.where);
       }
       
       // Add shop_id to create data
@@ -237,10 +245,106 @@ export function createPrismaTenantMiddleware(shopId: string) {
       // Add shop_id to update where clause
       if (['update', 'updateMany', 'delete', 'deleteMany'].includes(params.action)) {
         params.args = params.args || {};
-        params.args.where = createScopedWhere(shopId, params.args.where);
+        params.args.where = createTenantScope(shopId, params.args.where);
       }
     }
     
     return next(params);
   };
+}
+
+/**
+ * Tenant-scoped model helper
+ * Wraps Prisma models with automatic tenant filtering
+ * 
+ * @param model - Prisma model to wrap
+ * @param shopId - Shop ID for tenant isolation
+ * @returns Scoped model proxy
+ */
+export function createTenantScopedModel<T extends object>(
+  model: T,
+  shopId: string
+): T {
+  return new Proxy(model, {
+    get(target: any, property: string) {
+      const originalMethod = target[property];
+      
+      if (typeof originalMethod !== 'function') {
+        return originalMethod;
+      }
+      
+      // Methods that need tenant scoping
+      const scopedMethods = ['findMany', 'findFirst', 'findUnique', 'count', 'aggregate'];
+      
+      if (scopedMethods.includes(property)) {
+        return function(...args: any[]) {
+          const [options = {}] = args;
+          const scopedOptions = {
+            ...options,
+            where: createTenantScope(shopId, options.where),
+          };
+          return originalMethod.call(target, scopedOptions);
+        };
+      }
+      
+      // Methods that need tenant in data
+      const dataMethods = ['create', 'createMany', 'update', 'updateMany', 'upsert'];
+      
+      if (dataMethods.includes(property)) {
+        return function(...args: any[]) {
+          const [options = {}] = args;
+          
+          if (property === 'create' || property === 'upsert') {
+            const scopedOptions = {
+              ...options,
+              data: {
+                ...options.data,
+                shop_id: shopId,
+              },
+            };
+            
+            if (property === 'upsert') {
+              scopedOptions.where = createTenantScope(shopId, options.where);
+            }
+            
+            return originalMethod.call(target, scopedOptions);
+          }
+          
+          if (property === 'createMany') {
+            const scopedOptions = {
+              ...options,
+              data: Array.isArray(options.data)
+                ? options.data.map((item: any) => ({ ...item, shop_id: shopId }))
+                : { ...options.data, shop_id: shopId },
+            };
+            return originalMethod.call(target, scopedOptions);
+          }
+          
+          if (property === 'update' || property === 'updateMany') {
+            const scopedOptions = {
+              ...options,
+              where: createTenantScope(shopId, options.where),
+            };
+            return originalMethod.call(target, scopedOptions);
+          }
+          
+          return originalMethod.call(target, ...args);
+        };
+      }
+      
+      // Delete methods
+      if (property === 'delete' || property === 'deleteMany') {
+        return function(...args: any[]) {
+          const [options = {}] = args;
+          const scopedOptions = {
+            ...options,
+            where: createTenantScope(shopId, options.where),
+          };
+          return originalMethod.call(target, scopedOptions);
+        };
+      }
+      
+      return originalMethod.bind(target);
+    },
+  });
 }

@@ -1,20 +1,21 @@
 /**
  * Quote Service
  * 
- * Orchestrates quote operations including PDF generation,
- * storage, and email delivery.
+ * Handles quote business logic including sending quotes,
+ * generating PDFs, and managing quote lifecycle.
+ * 
+ * @module services/quote
  */
 
-import { PrismaClient, Quote, Prisma } from '@prisma/client';
 import { db } from '../config/database';
 import { pdfService } from './pdf.service';
 import { storageService } from './storage.service';
 import { emailService } from './email.service';
 import { templateService } from './template.service';
 import { calculatePricing } from './pricing-engine';
+import { Quote, Prisma } from '@prisma/client';
 import { logger } from '../utils/logger';
 import { AppError } from '../utils/errors';
-import { AuthUser } from '../types/auth.types';
 
 export interface SendQuoteOptions {
   recipientEmail?: string;
@@ -29,10 +30,279 @@ export interface QuoteWithRelations extends Quote {
 }
 
 class QuoteService {
-  private db: PrismaClient;
+  private db: typeof db;
 
   constructor() {
     this.db = db;
+  }
+
+  /**
+   * List quotes with pagination and filters
+   */
+  async listQuotes(shopId: string, options: any = {}) {
+    const {
+      page = 1,
+      pageSize = 20,
+      status,
+      customerId,
+      productId,
+      sortBy = 'created_at',
+      sortOrder = 'desc',
+    } = options;
+
+    const where: Prisma.QuoteWhereInput = { shop_id: shopId };
+    if (status) where.status = status;
+    if (customerId) where.customer_id = customerId;
+    if (productId) where.product_id = productId;
+
+    const skip = (page - 1) * pageSize;
+
+    const [quotes, total] = await Promise.all([
+      this.db.quote.findMany({
+        where,
+        include: {
+          customer: true,
+          product: true,
+          user: {
+            select: {
+              id: true,
+              email: true,
+            },
+          },
+        },
+        skip,
+        take: pageSize,
+        orderBy: {
+          [sortBy]: sortOrder,
+        },
+      }),
+      this.db.quote.count({ where }),
+    ]);
+
+    return {
+      data: quotes,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages: Math.ceil(total / pageSize),
+      },
+    };
+  }
+
+  /**
+   * Preview quote pricing without saving
+   */
+  async previewQuote(shopId: string, data: any) {
+    const { productId, quantity, specifications } = data;
+
+    // Get product with material
+    const product = await this.db.product.findFirst({
+      where: {
+        id: productId,
+        shop_id: shopId,
+      },
+      include: {
+        material: true,
+      },
+    });
+
+    if (!product) {
+      throw new AppError('Product not found', 404);
+    }
+
+    // Calculate pricing
+    const pricing = calculatePricing({
+      product,
+      quantity,
+      specifications,
+      material: product.material,
+      shop: { markup_percent: 50 }, // Default markup
+    });
+
+    return {
+      productId,
+      quantity,
+      specifications,
+      pricing,
+    };
+  }
+
+  /**
+   * Create a new quote
+   */
+  async createQuote(shopId: string, userId: string, data: any) {
+    const { customerId, productId, quantity, specifications } = data;
+
+    // Verify customer belongs to shop
+    const customer = await this.db.customer.findFirst({
+      where: {
+        id: customerId,
+        shop_id: shopId,
+      },
+    });
+
+    if (!customer) {
+      throw new AppError('Customer not found', 404);
+    }
+
+    // Get product with material
+    const product = await this.db.product.findFirst({
+      where: {
+        id: productId,
+        shop_id: shopId,
+        active: true,
+      },
+      include: {
+        material: true,
+      },
+    });
+
+    if (!product) {
+      throw new AppError('Product not found or inactive', 404);
+    }
+
+    // Get shop for markup
+    const shop = await this.db.shop.findUnique({
+      where: { id: shopId },
+    });
+
+    if (!shop) {
+      throw new AppError('Shop not found', 404);
+    }
+
+    // Calculate pricing
+    const pricing = calculatePricing({
+      product,
+      quantity,
+      specifications,
+      material: product.material,
+      shop,
+    });
+
+    // Create quote
+    const quote = await this.db.quote.create({
+      data: {
+        shop_id: shopId,
+        customer_id: customerId,
+        product_id: productId,
+        user_id: userId,
+        quantity,
+        specifications,
+        calculated_cost: pricing.totalCost,
+        selling_price: pricing.sellingPrice,
+        margin_percent: pricing.marginPercent,
+        status: 'draft',
+      },
+      include: {
+        customer: true,
+        product: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return quote;
+  }
+
+  /**
+   * Update quote specifications and recalculate pricing
+   */
+  async updateQuote(quoteId: string, shopId: string, data: any) {
+    const { quantity, specifications } = data;
+
+    // Get existing quote
+    const existingQuote = await this.db.quote.findFirst({
+      where: {
+        id: quoteId,
+        shop_id: shopId,
+      },
+      include: {
+        product: {
+          include: {
+            material: true,
+          },
+        },
+      },
+    });
+
+    if (!existingQuote) {
+      throw new AppError('Quote not found', 404);
+    }
+
+    if (existingQuote.status !== 'draft') {
+      throw new AppError('Can only edit draft quotes', 400);
+    }
+
+    // Get shop for markup
+    const shop = await this.db.shop.findUnique({
+      where: { id: shopId },
+    });
+
+    if (!shop) {
+      throw new AppError('Shop not found', 404);
+    }
+
+    // Recalculate pricing
+    const pricing = calculatePricing({
+      product: existingQuote.product,
+      quantity: quantity || existingQuote.quantity,
+      specifications: specifications || existingQuote.specifications,
+      material: existingQuote.product.material,
+      shop,
+    });
+
+    // Update quote
+    const quote = await this.db.quote.update({
+      where: { id: quoteId },
+      data: {
+        quantity: quantity || existingQuote.quantity,
+        specifications: specifications || existingQuote.specifications,
+        calculated_cost: pricing.totalCost,
+        selling_price: pricing.sellingPrice,
+        margin_percent: pricing.marginPercent,
+      },
+      include: {
+        customer: true,
+        product: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return quote;
+  }
+
+  /**
+   * Delete a draft quote
+   */
+  async deleteQuote(quoteId: string, shopId: string) {
+    const quote = await this.db.quote.findFirst({
+      where: {
+        id: quoteId,
+        shop_id: shopId,
+      },
+    });
+
+    if (!quote) {
+      throw new AppError('Quote not found', 404);
+    }
+
+    if (quote.status !== 'draft') {
+      throw new AppError('Can only delete draft quotes', 400);
+    }
+
+    await this.db.quote.delete({
+      where: { id: quoteId },
+    });
   }
 
   /**
@@ -58,6 +328,7 @@ class QuoteService {
             },
           },
           user: true,
+          shop: true,
         },
       });
 
@@ -70,10 +341,11 @@ class QuoteService {
 
       // Recalculate pricing to ensure accuracy
       const pricing = calculatePricing({
-        productId: quote.product_id,
+        product: quote.product,
+        material: quote.product.material,
         quantity: quote.quantity,
         specifications,
-        product: quote.product,
+        shop: quote.shop,
       });
 
       // Add unit price to pricing
@@ -134,7 +406,7 @@ class QuoteService {
 
       try {
         await emailService.sendQuoteEmail({
-          to: recipientEmail,
+          to: recipientEmail || '',
           customerName: quote.customer.name,
           quoteNumber: `Q-${quoteId.slice(-8).toUpperCase()}`,
           quotePdfUrl: url,
@@ -148,7 +420,7 @@ class QuoteService {
           ccEmails: options.ccEmails,
         });
       } catch (emailError) {
-        logger.error('Failed to send quote email', emailError);
+        logger.error('Failed to send quote email', emailError as Error);
         // Continue even if email fails
       }
 
@@ -162,7 +434,7 @@ class QuoteService {
         emailSent,
       };
     } catch (error) {
-      logger.error('Failed to send quote', error);
+      logger.error('Failed to send quote', error as Error);
       throw error;
     }
   }
@@ -198,7 +470,8 @@ class QuoteService {
       try {
         await storageService.delete(quote.pdf_key);
       } catch (error) {
-        logger.error('Failed to delete old PDF', error);
+        logger.error('Failed to delete old PDF', error as Error);
+        // Don't fail the operation if we can't delete the old PDF
       }
     }
 
@@ -261,14 +534,17 @@ class QuoteService {
       assignedTo?: string;
     } = {}
   ): Promise<any> {
-    const quote = await this.db.quote.findFirst({
-      where: {
-        id: quoteId,
-        shop_id: shopId,
-      },
+    const quote = await this.db.quote.findUnique({
+      where: { id: quoteId },
       include: {
         customer: true,
         product: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
       },
     });
 
@@ -280,8 +556,8 @@ class QuoteService {
       throw new AppError('Quote already accepted', 400);
     }
 
-    // Start transaction
-    const result = await this.db.$transaction(async (tx) => {
+    // Use transaction to ensure consistency
+    const result = await this.db.$transaction(async (tx: Prisma.TransactionClient) => {
       // Update quote status
       const updatedQuote = await tx.quote.update({
         where: { id: quoteId },
@@ -319,7 +595,8 @@ class QuoteService {
           workOrderNumber: `WO-${workOrder.id.slice(-8).toUpperCase()}`,
         });
       } catch (error) {
-        logger.error('Failed to send acceptance notification', error);
+        logger.error('Failed to send acceptance notification', error as Error);
+        // Don't fail the operation if email fails
       }
 
       return {
@@ -391,23 +668,29 @@ class QuoteService {
         },
       });
     } catch (error) {
-      logger.error('Failed to log quote activity', error);
+      logger.error('Failed to log quote activity', error as Error);
+      // Don't fail the operation if activity logging fails
     }
   }
 
   /**
    * Get quote statistics
    */
-  async getQuoteStats(shopId: string, dateRange?: { start: Date; end: Date }) {
-    const where: Prisma.QuoteWhereInput = {
-      shop_id: shopId,
-    };
+  async getQuoteStats(
+    shopId: string,
+    dateRange?: { start?: Date; end?: Date }
+  ): Promise<any> {
+    const where: Prisma.QuoteWhereInput = { shop_id: shopId };
 
-    if (dateRange) {
-      where.created_at = {
-        gte: dateRange.start,
-        lte: dateRange.end,
-      };
+    // Add date range filter if provided
+    if (dateRange?.start || dateRange?.end) {
+      where.created_at = {};
+      if (dateRange.start) {
+        where.created_at.gte = dateRange.start;
+      }
+      if (dateRange.end) {
+        where.created_at.lte = dateRange.end;
+      }
     }
 
     const [
@@ -415,7 +698,6 @@ class QuoteService {
       quotesByStatus,
       totalValue,
       averageValue,
-      conversionRate,
     ] = await Promise.all([
       // Total quotes
       this.db.quote.count({ where }),
@@ -442,16 +724,9 @@ class QuoteService {
           selling_price: true,
         },
       }),
-
-      // Conversion rate
-      this.db.quote.groupBy({
-        by: ['status'],
-        where,
-        _count: true,
-      }),
     ]);
 
-    const statusCounts = quotesByStatus.reduce((acc, item) => {
+    const statusCounts = quotesByStatus.reduce((acc: Record<string, number>, item: any) => {
       acc[item.status] = item._count;
       return acc;
     }, {} as Record<string, number>);

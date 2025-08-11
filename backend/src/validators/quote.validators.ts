@@ -1,15 +1,15 @@
 /**
  * Quote Validation Schemas
  * 
- * Zod schemas for validating quote-related requests.
- * Ensures quote data integrity and business rule compliance.
+ * Zod schemas for validating quote-related API requests.
+ * Ensures data integrity and type safety at API boundaries.
  * 
  * @module validators/quote
  */
 
 import { z } from 'zod';
 import { QuoteStatus } from '@prisma/client';
-import { commonSchemas, createPaginatedQuerySchema } from '../middleware/validation';
+import { createPaginatedQuerySchema } from '../middleware/validation';
 
 /**
  * Quote specifications schema

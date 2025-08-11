@@ -14,6 +14,7 @@ import { logger } from '../utils/logger';
 import { AppError } from '../utils/errors';
 import { env } from '../config/env';
 
+
 export interface EmailOptions {
   to: string | string[];
   cc?: string | string[];
@@ -108,9 +109,9 @@ class EmailService {
   }
 
   /**
-   * Load and compile email template
+   * Load and cache email template
    */
-  async loadTemplate(templateName: string): Promise<handlebars.TemplateDelegate> {
+  private async loadTemplate(templateName: string): Promise<handlebars.TemplateDelegate> {
     if (this.templates.has(templateName)) {
       return this.templates.get(templateName)!;
     }
@@ -123,13 +124,13 @@ class EmailService {
         'emails',
         `${templateName}.hbs`
       );
-      const templateContent = await fs.readFile(templatePath, 'utf-8');
-      const compiled = handlebars.compile(templateContent);
+      const html = await fs.readFile(templatePath, 'utf-8');
+      const compiled = handlebars.compile(html);
       this.templates.set(templateName, compiled);
       return compiled;
     } catch (error) {
-      logger.error(`Failed to load email template: ${templateName}`, error);
-      throw new AppError(`Email template not found: ${templateName}`, 500);
+      logger.error(`Failed to load email template: ${templateName}`, error as Error);
+      throw new Error(`Failed to load email template: ${templateName}`);
     }
   }
 
@@ -158,8 +159,8 @@ class EmailService {
         subject: options.subject,
       });
     } catch (error) {
-      logger.error('Failed to send email', error);
-      throw new AppError('Failed to send email', 500);
+      logger.error('Failed to send email', error as Error);
+      throw new Error(`Failed to send email: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -240,19 +241,19 @@ class EmailService {
 
     // Note: SES requires separate handling for attachments using raw email
     if (options.attachments && options.attachments.length > 0) {
-      await this.sendRawEmailWithSES(options);
+      await this.sendRawEmailWithSES();
     } else {
       await this.sesClient.sendEmail(params).promise();
     }
   }
 
   /**
-   * Send raw email with attachments using SES
+   * Send raw email using AWS SES
    */
-  private async sendRawEmailWithSES(options: EmailOptions): Promise<void> {
-    // This would require building a MIME message
-    // For now, throw an error for attachments with SES
-    throw new AppError('Attachments not yet supported with SES', 501);
+  private async sendRawEmailWithSES(): Promise<void> {
+    // Implementation would go here
+    // For now, throw error as SES is not configured
+    throw new Error('AWS SES not configured');
   }
 
   /**

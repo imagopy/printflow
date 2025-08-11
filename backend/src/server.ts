@@ -131,10 +131,10 @@ async function startServer(): Promise<void> {
           await disconnectDatabase();
           logger.info('Database connection closed');
 
-          // Exit process
+          await new Promise((resolve) => setTimeout(resolve, 5000));
           process.exit(0);
         } catch (error) {
-          logger.error('Error during graceful shutdown', { error });
+          logger.error('Error during graceful shutdown', { error: error as Error });
           process.exit(1);
         }
       });
@@ -162,7 +162,7 @@ async function startServer(): Promise<void> {
     });
 
   } catch (error) {
-    logger.error('Failed to start server', { error });
+    logger.error('Failed to start server', { error: error as Error });
     process.exit(1);
   }
 }

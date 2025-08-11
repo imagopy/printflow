@@ -21,18 +21,18 @@ export interface PricingInputs {
     setup_cost: Decimal | number;
     setup_threshold: number;
     estimated_hours: Decimal | number;
-    base_cost_formula?: string | null;
+    base_cost_formula?: any;
   };
-  material: {
+  material?: {
     id: string;
     name: string;
     cost_per_unit: Decimal | number;
     unit_type: 'sheet' | 'roll' | 'kg';
   } | null;
   shop: {
-    id: string;
+    id?: string;
     markup_percent: Decimal | number;
-    labor_hourly_rate: Decimal | number;
+    labor_hourly_rate?: Decimal | number;
   };
   quantity: number;
   specifications: Record<string, any>;
@@ -66,7 +66,7 @@ export interface PricingResult {
  * Material calculation strategies by product type
  */
 interface MaterialCalculator {
-  calculate(quantity: number, specs: Record<string, any>, material: NonNullable<PricingInputs['material']>): {
+  calculate(quantity: number, specs: Record<string, any>): {
     unitsNeeded: number;
     wastePercent: number;
   };
@@ -77,7 +77,7 @@ interface MaterialCalculator {
  * Calculates sheet usage based on card dimensions
  */
 class BusinessCardCalculator implements MaterialCalculator {
-  calculate(quantity: number, specs: Record<string, any>, material: NonNullable<PricingInputs['material']>): {
+  calculate(quantity: number, specs: Record<string, any>): {
     unitsNeeded: number;
     wastePercent: number;
   } {
@@ -128,7 +128,7 @@ class BusinessCardCalculator implements MaterialCalculator {
  * Simpler calculation for single items per sheet
  */
 class FlyerCalculator implements MaterialCalculator {
-  calculate(quantity: number, specs: Record<string, any>, material: NonNullable<PricingInputs['material']>): {
+  calculate(quantity: number, specs: Record<string, any>): {
     unitsNeeded: number;
     wastePercent: number;
   } {
@@ -151,7 +151,7 @@ class FlyerCalculator implements MaterialCalculator {
  * Calculates based on linear measurements
  */
 class BannerCalculator implements MaterialCalculator {
-  calculate(quantity: number, specs: Record<string, any>, material: NonNullable<PricingInputs['material']>): {
+  calculate(quantity: number, specs: Record<string, any>): {
     unitsNeeded: number;
     wastePercent: number;
   } {
@@ -205,7 +205,7 @@ export function calculatePricing(inputs: PricingInputs): PricingResult {
   const setupThreshold = product.setup_threshold;
   const estimatedHours = Number(product.estimated_hours);
   const markupPercent = Number(shop.markup_percent);
-  const laborHourlyRate = Number(shop.labor_hourly_rate);
+  const laborHourlyRate = shop.labor_hourly_rate ? Number(shop.labor_hourly_rate) : 50; // Default $50/hour
   
   let materialCost = 0;
   let materialUsage = undefined;
@@ -215,7 +215,7 @@ export function calculatePricing(inputs: PricingInputs): PricingResult {
     const category = specifications.category || 'default';
     const calculator = getMaterialCalculator(category);
     
-    const { unitsNeeded, wastePercent } = calculator.calculate(quantity, specifications, material);
+    const { unitsNeeded, wastePercent } = calculator.calculate(quantity, specifications);
     const costPerUnit = Number(material.cost_per_unit);
     
     materialCost = unitsNeeded * costPerUnit;

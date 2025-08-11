@@ -2,14 +2,13 @@
  * Rate Limiting Middleware
  * 
  * Implements rate limiting to prevent abuse and ensure fair usage.
- * Different limits for general API access and resource-intensive operations.
+ * Uses in-memory store by default, Redis for production scalability.
  * 
  * @module middleware/rate-limit
  */
 
-import rateLimit, { RateLimitRequestHandler } from 'express-rate-limit';
+import rateLimit, { Options } from 'express-rate-limit';
 import { Request, Response } from 'express';
-import { RateLimitError } from '../utils/errors';
 import { env } from '../config/env';
 import { AuthenticatedRequest } from '../types/auth.types';
 
@@ -33,21 +32,18 @@ function generateKey(req: Request): string {
 }
 
 /**
- * Custom handler for rate limit exceeded
- * Returns consistent error response
+ * Custom rate limit handler
+ * Provides consistent error response for rate limit violations
+ * 
+ * @param _req - Express request (unused)
+ * @param res - Express response
  */
-function rateLimitHandler(req: Request, res: Response): void {
-  const retryAfter = res.getHeader('Retry-After');
-  const retrySeconds = typeof retryAfter === 'string' ? parseInt(retryAfter, 10) : undefined;
-  
-  const error = new RateLimitError(retrySeconds);
-  
-  res.status(error.statusCode).json({
+function rateLimitHandler(_req: Request, res: Response): void {
+  res.status(429).json({
     error: {
-      message: error.message,
-      code: error.code,
-      statusCode: error.statusCode,
-      retryAfter: retrySeconds,
+      message: 'Too many requests, please try again later',
+      code: 'RATE_LIMIT_EXCEEDED',
+      statusCode: 429,
     },
   });
 }
@@ -56,7 +52,7 @@ function rateLimitHandler(req: Request, res: Response): void {
  * General API rate limiter
  * Applied to all endpoints for basic protection
  */
-export const generalLimiter: RateLimitRequestHandler = rateLimit({
+export const generalLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 1000, // 1000 requests per hour
   standardHeaders: true,
@@ -73,7 +69,7 @@ export const generalLimiter: RateLimitRequestHandler = rateLimit({
  * Strict rate limiter for authentication endpoints
  * Prevents brute force attacks
  */
-export const authLimiter: RateLimitRequestHandler = rateLimit({
+export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 attempts per 15 minutes
   standardHeaders: true,
@@ -90,7 +86,7 @@ export const authLimiter: RateLimitRequestHandler = rateLimit({
  * Quote generation rate limiter
  * Prevents abuse of resource-intensive pricing calculations
  */
-export const quoteGenerationLimiter: RateLimitRequestHandler = rateLimit({
+export const quoteGenerationLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS || 60 * 1000, // Default 1 minute
   max: env.RATE_LIMIT_MAX_REQUESTS || 100, // Default 100 requests per minute
   standardHeaders: true,
@@ -103,7 +99,7 @@ export const quoteGenerationLimiter: RateLimitRequestHandler = rateLimit({
  * PDF generation rate limiter
  * Strict limits for resource-intensive operations
  */
-export const pdfGenerationLimiter: RateLimitRequestHandler = rateLimit({
+export const pdfGenerationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 50, // 50 PDFs per hour
   standardHeaders: true,
@@ -116,7 +112,7 @@ export const pdfGenerationLimiter: RateLimitRequestHandler = rateLimit({
  * Email sending rate limiter
  * Prevents spam and protects email reputation
  */
-export const emailLimiter: RateLimitRequestHandler = rateLimit({
+export const emailLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 20, // 20 emails per hour
   standardHeaders: true,
@@ -129,7 +125,7 @@ export const emailLimiter: RateLimitRequestHandler = rateLimit({
  * API write operations rate limiter
  * For POST, PUT, DELETE operations
  */
-export const writeLimiter: RateLimitRequestHandler = rateLimit({
+export const writeLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 60, // 60 write operations per minute
   standardHeaders: true,
@@ -143,26 +139,31 @@ export const writeLimiter: RateLimitRequestHandler = rateLimit({
 });
 
 /**
- * Create custom rate limiter
- * Factory function for endpoint-specific limits
+ * Creates a basic rate limiter for general endpoints
+ * Uses in-memory store by default
  * 
- * @param options - Rate limit options
- * @returns {RateLimitRequestHandler} Configured rate limiter
+ * @param options - Rate limiter options
+ * @returns Express rate limit middleware
  */
-export function createRateLimiter(options: {
-  windowMs: number;
-  max: number;
-  keyGenerator?: (req: Request) => string;
-  skipSuccessfulRequests?: boolean;
-}): RateLimitRequestHandler {
+export const createRateLimiter = (options?: Partial<Options>) => {
   return rateLimit({
-    ...options,
+    windowMs: env.RATE_LIMIT_WINDOW_MS,
+    max: env.RATE_LIMIT_MAX_REQUESTS,
+    message: 'Too many requests from this IP, please try again later',
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: options.keyGenerator || generateKey,
-    handler: rateLimitHandler,
+    handler: (_req: Request, res: Response) => {
+      res.status(429).json({
+        success: false,
+        error: {
+          code: 'RATE_LIMIT_EXCEEDED',
+          message: 'Too many requests, please try again later',
+        },
+      });
+    },
+    ...options,
   });
-}
+};
 
 /**
  * Rate limit configuration for different endpoint groups

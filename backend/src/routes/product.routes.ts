@@ -1,8 +1,8 @@
 /**
  * Product Routes
  * 
- * Handles product management operations including CRUD,
- * category management, and material associations.
+ * API endpoints for product configuration management.
+ * Handles product templates used for quote generation.
  * 
  * @module routes/product
  */
@@ -23,15 +23,8 @@ import {
   createProductSchema,
   updateProductSchema,
   listProductsSchema,
-  productCategoriesSchema,
-  bulkUpdateProductsSchema,
   duplicateProductSchema,
-  CreateProductRequest,
-  UpdateProductRequest,
-  ListProductsQuery,
-  ProductCategoriesQuery,
-  BulkUpdateProductsRequest,
-  DuplicateProductRequest,
+  bulkUpdateProductsSchema,
 } from '../validators/product.validators';
 import { 
   NotFoundError, 
@@ -40,6 +33,7 @@ import {
 } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -54,17 +48,18 @@ router.use(tenantIsolation);
  */
 router.get(
   '/',
+  requireRole('admin', 'sales', 'production'),
   validateQuery(listProductsSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant } = tenantReq;
-    const query = req.query as ListProductsQuery;
+    const query = req.query as z.infer<typeof listProductsSchema>;
 
     // Build where clause with filters
-    const where: Prisma.ProductWhereInput = tenant.scope({});
+    const where: Prisma.ProductWhereInput = { shop_id: tenant.shopId };
 
-    // Search filter (name or category)
-    if (query.search) {
+    // Search filter
+    if ('search' in query && query.search) {
       where.OR = [
         { name: { contains: query.search, mode: 'insensitive' } },
         { category: { contains: query.search, mode: 'insensitive' } },
@@ -72,27 +67,27 @@ router.get(
     }
 
     // Category filter
-    if (query.category) {
+    if ('category' in query && query.category) {
       where.category = { equals: query.category, mode: 'insensitive' };
     }
 
     // Active filter
-    if (query.active !== undefined) {
+    if ('active' in query && query.active !== undefined) {
       where.active = query.active;
     }
 
-    // Has material filter
-    if (query.hasMaterial !== undefined) {
+    // Material filter
+    if ('hasMaterial' in query && query.hasMaterial !== undefined) {
       where.material_id = query.hasMaterial ? { not: null } : null;
     }
 
     // Setup cost range filter
-    if (query.minSetupCost !== undefined || query.maxSetupCost !== undefined) {
+    if (('minSetupCost' in query && query.minSetupCost !== undefined) || ('maxSetupCost' in query && query.maxSetupCost !== undefined)) {
       where.setup_cost = {};
-      if (query.minSetupCost !== undefined) {
+      if ('minSetupCost' in query && query.minSetupCost !== undefined) {
         where.setup_cost.gte = query.minSetupCost;
       }
-      if (query.maxSetupCost !== undefined) {
+      if ('maxSetupCost' in query && query.maxSetupCost !== undefined) {
         where.setup_cost.lte = query.maxSetupCost;
       }
     }
@@ -156,11 +151,11 @@ router.get(
  */
 router.get(
   '/categories',
-  validateQuery(productCategoriesSchema),
+      validateQuery(listProductsSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant } = tenantReq;
-    const query = req.query as ProductCategoriesQuery;
+          const query = req.query as z.infer<typeof listProductsSchema>;
 
     // Build where clause
     const where: Prisma.ProductWhereInput = tenant.scope({});
@@ -392,13 +387,17 @@ router.post(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
-    const data = req.body as CreateProductRequest;
+    const data = req.body as z.infer<typeof createProductSchema>;
 
-    // Check if product name already exists
+    // Check for duplicate name
     const existingProduct = await prisma.product.findFirst({
-      where: tenant.scope({
-        name: { equals: data.name, mode: 'insensitive' },
-      }),
+      where: {
+        shop_id: tenant.shopId,
+        name: {
+          equals: data.name,
+          mode: 'insensitive' as Prisma.QueryMode,
+        },
+      },
     });
 
     if (existingProduct) {
@@ -418,25 +417,19 @@ router.post(
 
     // Create product
     const product = await prisma.product.create({
-      data: tenant.scopeCreate({
+      data: {
+        shop_id: tenant.shopId,
         name: data.name,
         category: data.category,
-        base_cost_formula: data.base_cost_formula,
+        base_cost_formula: data.base_cost_formula ?? Prisma.JsonNull,
         setup_cost: data.setup_cost,
         setup_threshold: data.setup_threshold,
         estimated_hours: data.estimated_hours,
-        material_id: data.material_id,
-        active: data.active ?? true,
-      }),
+        material_id: data.material_id || null,
+        active: data.active,
+      },
       include: {
-        material: {
-          select: {
-            id: true,
-            name: true,
-            cost_per_unit: true,
-            unit_type: true,
-          },
-        },
+        material: true,
       },
     });
 
@@ -470,7 +463,7 @@ router.put(
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
     const { id } = req.params;
-    const updates = req.body as UpdateProductRequest;
+    const data = req.body as z.infer<typeof updateProductSchema>;
 
     // Check if product exists
     const existingProduct = await prisma.product.findFirst({
@@ -481,28 +474,32 @@ router.put(
       throw new NotFoundError('Product', id);
     }
 
-    // Check for name conflicts if updating name
-    if (updates.name && updates.name !== existingProduct.name) {
-      const nameConflict = await prisma.product.findFirst({
-        where: tenant.scope({
-          name: { equals: updates.name, mode: 'insensitive' },
+    // Check for duplicate name
+    if (data.name) {
+      const existingProduct = await prisma.product.findFirst({
+        where: {
+          shop_id: tenant.shopId,
+          name: {
+            equals: data.name,
+            mode: 'insensitive' as Prisma.QueryMode,
+          },
           id: { not: id },
-        }),
+        },
       });
 
-      if (nameConflict) {
+      if (existingProduct) {
         throw new ConflictError('Product with this name already exists');
       }
     }
 
     // Verify material belongs to shop if updating
-    if (updates.material_id !== undefined && updates.material_id !== null) {
+    if (data.material_id !== undefined && data.material_id !== null) {
       const material = await prisma.material.findFirst({
-        where: tenant.scope({ id: updates.material_id }),
+        where: tenant.scope({ id: data.material_id }),
       });
 
       if (!material) {
-        throw new NotFoundError('Material', updates.material_id);
+        throw new NotFoundError('Material', data.material_id);
       }
     }
 
@@ -510,30 +507,25 @@ router.put(
     const product = await prisma.product.update({
       where: { id },
       data: {
-        ...(updates.name !== undefined && { name: updates.name }),
-        ...(updates.category !== undefined && { category: updates.category }),
-        ...(updates.base_cost_formula !== undefined && { base_cost_formula: updates.base_cost_formula }),
-        ...(updates.setup_cost !== undefined && { setup_cost: updates.setup_cost }),
-        ...(updates.setup_threshold !== undefined && { setup_threshold: updates.setup_threshold }),
-        ...(updates.estimated_hours !== undefined && { estimated_hours: updates.estimated_hours }),
-        ...(updates.material_id !== undefined && { material_id: updates.material_id }),
-        ...(updates.active !== undefined && { active: updates.active }),
+        ...(data.name && { name: data.name }),
+        ...(data.category && { category: data.category }),
+                ...(data.base_cost_formula !== undefined && {
+          base_cost_formula: data.base_cost_formula ?? Prisma.JsonNull
+        }),
+        ...(data.setup_cost !== undefined && { setup_cost: data.setup_cost }),
+        ...(data.setup_threshold !== undefined && { setup_threshold: data.setup_threshold }),
+        ...(data.estimated_hours !== undefined && { estimated_hours: data.estimated_hours }),
+        ...(data.material_id !== undefined && { material_id: data.material_id }),
+        ...(data.active !== undefined && { active: data.active }),
       },
       include: {
-        material: {
-          select: {
-            id: true,
-            name: true,
-            cost_per_unit: true,
-            unit_type: true,
-          },
-        },
+        material: true,
       },
     });
 
     logger.info('Product updated', {
       productId: product.id,
-      updates: Object.keys(updates),
+      updates: Object.keys(data),
       shopId: tenant.shopId,
       userId: user.userId,
     });
@@ -558,7 +550,7 @@ router.patch(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
-    const { productIds, updates } = req.body as BulkUpdateProductsRequest;
+    const { productIds, updates } = req.body as z.infer<typeof bulkUpdateProductsSchema>;
 
     // Verify all products belong to shop
     const productCount = await prisma.product.count({
@@ -629,73 +621,71 @@ router.post(
     const tenantReq = req as TenantRequest;
     const { tenant, user } = tenantReq;
     const { id } = req.params;
-    const options = req.body as DuplicateProductRequest;
+    const data = req.body as z.infer<typeof duplicateProductSchema>;
 
     // Fetch original product
-    const originalProduct = await prisma.product.findFirst({
+    const sourceProduct = await prisma.product.findFirst({
       where: tenant.scope({ id }),
     });
 
-    if (!originalProduct) {
+    if (!sourceProduct) {
       throw new NotFoundError('Product', id);
     }
 
     // Generate new name
-    const newName = options.name || `${originalProduct.name} (Copy)`;
+    const newName = data.name || `${sourceProduct.name} (Copy)`;
 
-    // Check for name conflicts
-    const nameConflict = await prisma.product.findFirst({
-      where: tenant.scope({
-        name: { equals: newName, mode: 'insensitive' },
-      }),
+    // Check for duplicate name
+    const existingProduct = await prisma.product.findFirst({
+      where: {
+        shop_id: tenant.shopId,
+        name: {
+          equals: newName,
+          mode: 'insensitive' as Prisma.QueryMode,
+        },
+      },
     });
 
-    if (nameConflict) {
+    if (existingProduct) {
       throw new ConflictError('Product with this name already exists');
     }
 
     // Calculate adjusted pricing if requested
-    let setupCost = originalProduct.setup_cost;
-    if (options.adjustPricing && options.pricingAdjustment !== undefined) {
-      const adjustment = 1 + (options.pricingAdjustment / 100);
-      setupCost = Number((Number(originalProduct.setup_cost) * adjustment).toFixed(2));
+    let setupCost = sourceProduct.setup_cost;
+    if (data.adjustPricing && data.pricingAdjustment !== undefined) {
+      const adjustment = 1 + (data.pricingAdjustment / 100);
+      setupCost = Number((Number(sourceProduct.setup_cost) * adjustment).toFixed(2));
     }
 
     // Create duplicate product
-    const newProduct = await prisma.product.create({
-      data: tenant.scopeCreate({
+    const duplicatedProduct = await prisma.product.create({
+      data: {
+        shop_id: tenant.shopId,
         name: newName,
-        category: originalProduct.category,
-        base_cost_formula: originalProduct.base_cost_formula,
+        category: sourceProduct.category,
+        base_cost_formula: sourceProduct.base_cost_formula as Prisma.InputJsonValue,
         setup_cost: setupCost,
-        setup_threshold: originalProduct.setup_threshold,
-        estimated_hours: originalProduct.estimated_hours,
-        material_id: originalProduct.material_id,
-        active: true, // New products start as active
-      }),
+        setup_threshold: sourceProduct.setup_threshold,
+        estimated_hours: sourceProduct.estimated_hours,
+        material_id: sourceProduct.material_id,
+        active: true,
+      },
       include: {
-        material: {
-          select: {
-            id: true,
-            name: true,
-            cost_per_unit: true,
-            unit_type: true,
-          },
-        },
+        material: true,
       },
     });
 
     logger.info('Product duplicated', {
       originalProductId: id,
-      newProductId: newProduct.id,
+      newProductId: duplicatedProduct.id,
       newName,
-      priceAdjusted: options.adjustPricing,
+      priceAdjusted: data.adjustPricing,
       shopId: tenant.shopId,
       userId: user.userId,
     });
 
     res.status(201).json({
-      data: newProduct,
+      data: duplicatedProduct,
       message: 'Product duplicated successfully',
     });
   })

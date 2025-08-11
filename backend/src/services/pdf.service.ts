@@ -60,8 +60,8 @@ class PDFService {
       this.isInitialized = true;
       logger.info('PDF service initialized successfully');
     } catch (error) {
-      logger.error('Failed to initialize PDF service', error);
-      throw new AppError('Failed to initialize PDF service', 500);
+      logger.error('Failed to initialize PDF service', error as Error);
+      throw new Error(`PDF service initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -110,8 +110,8 @@ class PDFService {
 
       return pdfBuffer;
     } catch (error) {
-      logger.error('Failed to generate PDF', error);
-      throw new AppError('Failed to generate PDF', 500);
+      logger.error('Failed to generate PDF', error as Error);
+      throw new Error(`PDF generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       await page.close();
     }
@@ -157,8 +157,8 @@ class PDFService {
 
       return pdfBuffer;
     } catch (error) {
-      logger.error('Failed to generate PDF from URL', error);
-      throw new AppError('Failed to generate PDF from URL', 500);
+      logger.error('Failed to generate PDF from URL', error as Error);
+      throw new Error(`PDF generation from URL failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       await page.close();
     }
@@ -172,7 +172,7 @@ class PDFService {
     filename: string
   ): Promise<string> {
     try {
-      const tempDir = process.env.PDF_STORAGE_PATH || './temp/pdfs';
+      const tempDir = process.env.PDF_STORAGE_PATH || '/tmp/pdfs';
       
       // Ensure directory exists
       await fs.mkdir(tempDir, { recursive: true });
@@ -180,11 +180,11 @@ class PDFService {
       const filePath = path.join(tempDir, filename);
       await fs.writeFile(filePath, pdfBuffer);
 
-      logger.info(`PDF saved to ${filePath}`);
+      logger.info('PDF saved to file', { path: filePath });
       return filePath;
     } catch (error) {
-      logger.error('Failed to save PDF to file', error);
-      throw new AppError('Failed to save PDF to file', 500);
+      logger.error('Failed to save PDF to file', error as Error);
+      throw new Error(`Failed to save PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -193,7 +193,7 @@ class PDFService {
    */
   async cleanupTempFiles(hoursOld: number = 24): Promise<void> {
     try {
-      const tempDir = process.env.PDF_STORAGE_PATH || './temp/pdfs';
+      const tempDir = process.env.PDF_STORAGE_PATH || '/tmp/pdfs';
       const files = await fs.readdir(tempDir);
       const now = Date.now();
       const maxAge = hoursOld * 60 * 60 * 1000;
@@ -207,8 +207,10 @@ class PDFService {
           logger.info(`Cleaned up old PDF: ${file}`);
         }
       }
+      logger.info('Cleaned up temp files', { count: files.length });
     } catch (error) {
-      logger.error('Failed to cleanup temp files', error);
+      logger.error('Failed to cleanup temp files', error as Error);
+      // Don't throw, just log the error
     }
   }
 

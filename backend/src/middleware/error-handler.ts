@@ -1,17 +1,18 @@
 /**
  * Error Handling Middleware
  * 
- * Global error handler that catches all errors and returns consistent responses.
- * Logs errors appropriately and hides sensitive information in production.
+ * Centralized error handling for the application.
+ * Catches and formats all errors before sending to client.
  * 
  * @module middleware/error-handler
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
-import { AppError, isOperationalError, normalizeError } from '../utils/errors';
+import { env } from '../config/env';
 import { logger } from '../utils/logger';
-import { env, isProduction } from '../config/env';
+import { AppError, ValidationError } from '../utils/errors';
 
 /**
  * Error response structure
@@ -29,147 +30,124 @@ interface ErrorResponse {
 }
 
 /**
- * Handle Prisma errors
- * Converts Prisma errors to appropriate AppError instances
+ * Handle Prisma database errors
+ * Converts Prisma errors to appropriate AppError types
  * 
  * @param error - Prisma error
- * @returns {AppError} Converted application error
+ * @returns AppError instance
  */
 function handlePrismaError(error: Prisma.PrismaClientKnownRequestError): AppError {
   switch (error.code) {
-    case 'P2002': {
+    case 'P2002':
       // Unique constraint violation
-      const target = error.meta?.target as string[] | undefined;
-      const field = target?.[0] || 'field';
+      const field = (error.meta?.target as string[])?.[0] || 'field';
       return new AppError(
         `A record with this ${field} already exists`,
         409,
-        'UNIQUE_CONSTRAINT_VIOLATION',
-        true,
-        { field, originalError: error.message }
+        'DUPLICATE_ENTRY'
       );
-    }
-    
-    case 'P2003': {
-      // Foreign key constraint violation
-      const field = error.meta?.field_name as string | undefined;
-      return new AppError(
-        `Invalid reference to related record${field ? ` in field '${field}'` : ''}`,
-        400,
-        'FOREIGN_KEY_VIOLATION',
-        true,
-        { field, originalError: error.message }
-      );
-    }
-    
-    case 'P2025': {
+      
+    case 'P2025':
       // Record not found
       return new AppError(
-        'The requested record was not found',
+        'The requested resource was not found',
         404,
-        'RECORD_NOT_FOUND',
-        true,
-        { originalError: error.message }
+        'NOT_FOUND'
       );
-    }
-    
-    case 'P2014': {
+      
+    case 'P2003':
+      // Foreign key constraint violation
+      return new AppError(
+        'Related resource not found',
+        400,
+        'INVALID_REFERENCE'
+      );
+      
+    case 'P2014':
       // Invalid ID
       return new AppError(
         'Invalid ID provided',
         400,
-        'INVALID_ID',
-        true,
-        { originalError: error.message }
+        'INVALID_ID'
       );
-    }
-    
-    default: {
-      // Other Prisma errors
+      
+    default:
+      // Generic database error
       return new AppError(
-        'Database operation failed',
+        env.NODE_ENV === 'development' ? error.message : 'Database operation failed',
         500,
-        'DATABASE_ERROR',
-        false,
-        { code: error.code, originalError: error.message }
+        'DATABASE_ERROR'
       );
-    }
   }
 }
 
 /**
  * Global error handler middleware
+ * Catches all errors and formats consistent error responses
  * 
  * @param error - Error object
  * @param req - Express request
  * @param res - Express response
- * @param next - Next middleware (unused but required by Express)
+ * @param _next - Express next function (unused)
  */
 export function errorHandler(
   error: Error,
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ): void {
-  // Convert to AppError if needed
+  // Log error details
+  logger.error('Request error', {
+    error: error as Error,
+    request: {
+      method: req.method,
+      url: req.url,
+      params: req.params,
+      query: req.query,
+      body: req.body,
+      headers: req.headers,
+    },
+  });
+
+  // Handle different error types
   let appError: AppError;
   
   if (error instanceof AppError) {
     appError = error;
+  } else if (error instanceof ZodError) {
+    const validationErrors = error.errors.map(err => ({
+      field: err.path.join('.'),
+      message: err.message,
+    }));
+    appError = new ValidationError('Validation failed', validationErrors);
   } else if (error instanceof Prisma.PrismaClientKnownRequestError) {
     appError = handlePrismaError(error);
-  } else if (error instanceof Prisma.PrismaClientValidationError) {
+  } else {
+    // Unknown errors
     appError = new AppError(
-      'Invalid data provided',
-      400,
-      'VALIDATION_ERROR',
-      true,
-      { originalError: error.message }
+      env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+      500,
+      'INTERNAL_ERROR'
     );
-  } else {
-    appError = normalizeError(error);
   }
 
-  // Log error with appropriate level
-  const logContext = {
-    error: error.message,
-    stack: error.stack,
-    statusCode: appError.statusCode,
-    code: appError.code,
-    url: req.url,
-    method: req.method,
-    ip: req.ip,
-    userId: (req as any).user?.userId,
-    shopId: (req as any).user?.shopId,
-    requestId: (req as any).requestId,
-    context: appError.context,
-  };
-
-  if (isOperationalError(error)) {
-    logger.warn('Operational error occurred', logContext);
-  } else {
-    logger.error('Programming error occurred', logContext);
-  }
-
-  // Prepare error response
-  const errorResponse: ErrorResponse = {
+  // Build error response
+  const errorResponse: any = {
     error: {
       message: appError.message,
       code: appError.code,
       statusCode: appError.statusCode,
     },
-    requestId: (req as any).requestId,
   };
 
   // Add validation errors if present
-  if ('validationErrors' in appError && appError.validationErrors) {
+  if (appError instanceof ValidationError && appError.validationErrors) {
     errorResponse.error.validationErrors = appError.validationErrors;
   }
 
-  // Add stack trace and context in development
-  if (!isProduction()) {
+  // Add stack trace in development
+  if (env.NODE_ENV === 'development' && error.stack) {
     errorResponse.error.stack = error.stack;
-    errorResponse.error.context = appError.context;
   }
 
   // Send error response
@@ -177,27 +155,37 @@ export function errorHandler(
 }
 
 /**
- * Not found handler
+ * 404 Not Found handler
  * Catches requests to undefined routes
  * 
  * @param req - Express request
  * @param res - Express response
- * @param next - Next middleware
+ * @param _next - Express next function (unused)
  */
 export function notFoundHandler(
   req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ): void {
   const error = new AppError(
-    `Route ${req.method} ${req.path} not found`,
+    `Cannot ${req.method} ${req.path}`,
     404,
-    'ROUTE_NOT_FOUND',
-    true,
-    { method: req.method, path: req.path }
+    'ROUTE_NOT_FOUND'
   );
   
-  next(error);
+  logger.warn('Route not found', {
+    method: req.method,
+    path: req.path,
+    ip: req.ip,
+  });
+  
+  res.status(404).json({
+    error: {
+      message: error.message,
+      code: error.code,
+      statusCode: error.statusCode,
+    },
+  });
 }
 
 /**

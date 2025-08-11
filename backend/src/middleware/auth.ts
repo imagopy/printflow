@@ -1,8 +1,8 @@
 /**
  * Authentication Middleware
  * 
- * Handles JWT token verification and user authentication.
- * Supports both httpOnly cookies and Authorization header for flexibility.
+ * Handles JWT token validation and user authentication.
+ * Implements role-based access control (RBAC).
  * 
  * @module middleware/auth
  */
@@ -10,54 +10,54 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
-import { AuthenticationError, AuthorizationError } from '../utils/errors';
-import { logger } from '../utils/logger';
-import { AuthUser, JwtPayload, AuthenticatedRequest } from '../types/auth.types';
 import { UserRole } from '@prisma/client';
+import { logger } from '../utils/logger';
+import { AuthenticationError, AuthorizationError } from '../utils/errors';
 
 /**
- * Extract JWT token from request
- * Checks both httpOnly cookie and Authorization header
- * 
- * @param req - Express request
- * @returns {string | null} JWT token or null if not found
+ * JWT payload interface
  */
-function extractToken(req: Request): string | null {
-  // Check httpOnly cookie first (preferred method)
-  const cookieToken = req.cookies?.token;
-  if (cookieToken) {
-    return cookieToken;
-  }
-
-  // Check Authorization header as fallback
-  const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith('Bearer ')) {
-    return authHeader.slice(7);
-  }
-
-  return null;
+interface JwtPayload {
+  userId: string;
+  email: string;
+  role: UserRole;
+  shopId: string;
+  iat?: number;
+  exp?: number;
 }
 
 /**
- * Verify JWT token and extract payload
- * 
- * @param token - JWT token to verify
- * @returns {JwtPayload} Decoded token payload
- * @throws {AuthenticationError} If token is invalid or expired
+ * Extended request interface with user information
  */
-function verifyToken(token: string): JwtPayload {
-  try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
-    return payload;
-  } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      throw new AuthenticationError('Token has expired', { expiredAt: error.expiredAt });
-    }
-    if (error instanceof jwt.JsonWebTokenError) {
-      throw new AuthenticationError('Invalid token', { error: error.message });
-    }
-    throw new AuthenticationError('Token verification failed');
+export interface AuthRequest extends Request {
+  user?: {
+    id: string;
+    email: string;
+    role: UserRole;
+    shopId: string;
+  };
+}
+
+/**
+ * Extract token from request
+ * Checks Authorization header and cookies
+ * 
+ * @param req - Express request
+ * @returns JWT token or null
+ */
+function extractToken(req: Request): string | null {
+  // Check Authorization header
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.substring(7);
   }
+  
+  // Check cookies
+  if (req.cookies?.['auth-token']) {
+    return req.cookies['auth-token'];
+  }
+  
+  return null;
 }
 
 /**
@@ -65,204 +65,203 @@ function verifyToken(token: string): JwtPayload {
  * Verifies JWT token and attaches user to request
  * 
  * @param req - Express request
- * @param res - Express response
- * @param next - Next middleware function
+ * @param res - Express response  
+ * @param next - Express next function
  */
-export function authenticate(
-  req: Request,
-  res: Response,
+export const authenticateToken = async (
+  req: AuthRequest,
+  _res: Response,
   next: NextFunction
-): void {
+): Promise<void> => {
   try {
     const token = extractToken(req);
     
     if (!token) {
       throw new AuthenticationError('No authentication token provided');
     }
-
-    const payload = verifyToken(token);
+    
+    // Verify token
+    const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
     
     // Attach user to request
-    const authReq = req as AuthenticatedRequest;
-    authReq.user = {
-      userId: payload.userId,
-      email: payload.email,
-      shopId: payload.shopId,
-      role: payload.role,
+    req.user = {
+      id: decoded.userId,
+      email: decoded.email,
+      role: decoded.role,
+      shopId: decoded.shopId,
     };
-
-    logger.debug('User authenticated', {
-      userId: payload.userId,
-      shopId: payload.shopId,
-      role: payload.role,
-    });
-
+    
     next();
   } catch (error) {
-    next(error);
+    if (error instanceof jwt.TokenExpiredError) {
+      next(new AuthenticationError('Token expired'));
+    } else if (error instanceof jwt.JsonWebTokenError) {
+      next(new AuthenticationError('Invalid token'));
+    } else {
+      next(error);
+    }
   }
-}
+};
 
 /**
- * Role-based access control middleware factory
- * Creates middleware that requires specific roles
+ * Creates middleware to require specific user roles
  * 
- * @param allowedRoles - Array of allowed user roles
- * @returns {Function} Express middleware function
+ * @param roles - Array of allowed roles
+ * @returns Express middleware function
  */
-export function requireRole(...allowedRoles: UserRole[]) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+export const requireRole = (...allowedRoles: UserRole[]) => {
+  return (req: AuthRequest, _res: Response, next: NextFunction): void => {
     try {
-      const authReq = req as AuthenticatedRequest;
-      
-      if (!authReq.user) {
+      if (!req.user) {
         throw new AuthenticationError('User not authenticated');
       }
-
-      if (!allowedRoles.includes(authReq.user.role)) {
-        logger.warn('Access denied - insufficient role', {
-          userId: authReq.user.userId,
-          userRole: authReq.user.role,
+      
+      if (!allowedRoles.includes(req.user.role)) {
+        logger.warn('Authorization failed', {
+          userId: req.user.id,
+          userRole: req.user.role,
           requiredRoles: allowedRoles,
-          path: req.path,
         });
         
         throw new AuthorizationError(
-          `Access denied. Required role: ${allowedRoles.join(' or ')}`,
-          {
-            userRole: authReq.user.role,
-            requiredRoles: allowedRoles,
-          }
+          `Access denied. Required role: ${allowedRoles.join(' or ')}`
         );
       }
-
+      
+      logger.debug('User authorized', {
+        userId: req.user.id,
+        role: req.user.role,
+        allowedRoles,
+      });
+      
       next();
     } catch (error) {
       next(error);
     }
   };
-}
+};
 
 /**
  * Optional authentication middleware
- * Attempts to authenticate but doesn't fail if no token present
- * Useful for endpoints that have different behavior for authenticated users
+ * Attaches user if token is present, but doesn't require it
  * 
  * @param req - Express request
- * @param res - Express response
- * @param next - Next middleware function
+ * @param res - Response object
+ * @param next - Express next function
  */
-export function optionalAuthenticate(
-  req: Request,
-  res: Response,
+export const optionalAuth = (
+  req: AuthRequest,
+  _res: Response,
   next: NextFunction
-): void {
+): void => {
   try {
     const token = extractToken(req);
     
     if (token) {
-      const payload = verifyToken(token);
-      const authReq = req as AuthenticatedRequest;
-      authReq.user = {
-        userId: payload.userId,
-        email: payload.email,
-        shopId: payload.shopId,
-        role: payload.role,
-      };
+      try {
+        const decoded = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+        req.user = {
+          id: decoded.userId,
+          email: decoded.email,
+          role: decoded.role,
+          shopId: decoded.shopId,
+        };
+      } catch (error) {
+        // Invalid token, but that's okay for optional auth
+        logger.debug('Optional authentication failed', { error: error as Error });
+      }
     }
     
     next();
   } catch (error) {
-    // Log error but continue without authentication
-    logger.debug('Optional authentication failed', { error });
-    next();
+    next(error);
   }
-}
+};
+
+/**
+ * Middleware to validate API keys for service-to-service auth
+ * 
+ * @param req - Express request
+ * @param _res - Response object (unused)
+ * @param next - Express next function
+ */
+export const authenticateApiKey = async (
+  req: AuthRequest,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const apiKey = req.headers['x-api-key'] as string;
+    
+    if (!apiKey) {
+      throw new AuthenticationError('API key required');
+    }
+    
+    // In a real application, validate against stored API keys
+    // For now, just check if it matches a pattern
+    if (!apiKey.startsWith('pk_')) {
+      throw new AuthenticationError('Invalid API key format');
+    }
+    
+    // Set a service user context
+    req.user = {
+      id: 'service',
+      email: 'service@printflow.com',
+      role: UserRole.admin,
+      shopId: 'system',
+    };
+    
+    next();
+  } catch (error) {
+    logger.error('API key authentication failed', { error: error as Error });
+    next(error);
+  }
+};
+
+/**
+ * Alias for backward compatibility
+ */
+export const authenticate = authenticateToken;
 
 /**
  * Generate JWT token for user
  * 
- * @param user - User data to encode in token
- * @returns {string} Signed JWT token
+ * @param user - User data to encode
+ * @returns Signed JWT token
  */
 export function generateToken(user: {
   id: string;
   email: string;
-  shopId: string;
   role: UserRole;
+  shopId: string;
 }): string {
   const payload: JwtPayload = {
     userId: user.id,
     email: user.email,
-    shopId: user.shopId,
     role: user.role,
+    shopId: user.shopId,
   };
-
+  
   return jwt.sign(payload, env.JWT_SECRET, {
     expiresIn: env.JWT_EXPIRES_IN,
-    issuer: 'printflow',
-    audience: 'printflow-api',
-  });
+  } as jwt.SignOptions);
 }
 
 /**
- * Set authentication cookie
- * Uses httpOnly cookie for security
- * 
- * @param res - Express response
- * @param token - JWT token to set
+ * Set auth cookie
  */
 export function setAuthCookie(res: Response, token: string): void {
-  const maxAge = parseJwtExpiry(env.JWT_EXPIRES_IN);
-  
-  res.cookie('token', token, {
+  res.cookie('auth-token', token, {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge,
-    path: '/',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
 }
 
 /**
- * Clear authentication cookie
- * 
- * @param res - Express response
+ * Clear auth cookie
  */
 export function clearAuthCookie(res: Response): void {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-  });
-}
-
-/**
- * Parse JWT expiry string to milliseconds
- * 
- * @param expiry - Expiry string (e.g., '8h', '7d', '30m')
- * @returns {number} Expiry in milliseconds
- */
-function parseJwtExpiry(expiry: string): number {
-  const match = expiry.match(/^(\d+)([smhd])$/);
-  if (!match) {
-    return 8 * 60 * 60 * 1000; // Default 8 hours
-  }
-
-  const [, value, unit] = match;
-  const num = parseInt(value, 10);
-
-  switch (unit) {
-    case 's':
-      return num * 1000;
-    case 'm':
-      return num * 60 * 1000;
-    case 'h':
-      return num * 60 * 60 * 1000;
-    case 'd':
-      return num * 24 * 60 * 60 * 1000;
-    default:
-      return 8 * 60 * 60 * 1000;
-  }
+  res.clearCookie('auth-token');
 }
